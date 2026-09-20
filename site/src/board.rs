@@ -620,11 +620,28 @@ pub struct ProjectsTemplate {
     pub error: Option<String>,
 }
 
+/// Renvoie vrai si l'URL est sûre pour un attribut `href` :
+/// uniquement http(s)://, ssh:// ou la forme scp `git@…`.
+fn is_safe_repo_url(url: &str) -> bool {
+    let l = url.trim().to_ascii_lowercase();
+    l.starts_with("http://")
+        || l.starts_with("https://")
+        || l.starts_with("ssh://")
+        || l.starts_with("git@")
+}
+
 pub struct ProjectItemRow {
     pub id: i64,
     pub name: String,
     pub git_repo: String,
     pub tasks: i64,
+}
+
+impl ProjectItemRow {
+    /// Renvoie vrai si l'URL peut être rendue en <a href> (sinon texte brut).
+    pub fn git_repo_is_link(&self) -> bool {
+        is_safe_repo_url(&self.git_repo)
+    }
 }
 
 /// Page de gestion des projets (nom + dépôt git).
@@ -684,6 +701,9 @@ pub async fn create_project(
     if name.is_empty() || name.len() > 64 {
         return Redirect::to("/projects?error=Project%20name%20must%20be%201%20to%2064%20characters.").into_response();
     }
+    if !repo.is_empty() && !is_safe_repo_url(&repo) {
+        return Redirect::to("/projects?error=Git%20repo%20must%20start%20with%20http%28s%29%3A%2F%2F%2C%20ssh%3A%2F%2F%20or%20git%40.").into_response();
+    }
     let conn = state.db.get().expect("pool db");
     let _ = conn.execute(
         "INSERT INTO projects (user_id, name, git_repo) VALUES (?1, ?2, ?3)",
@@ -703,11 +723,13 @@ pub async fn update_project(
     let name = f.name.trim().to_string();
     let repo = f.git_repo.trim().to_string();
     if !name.is_empty() && name.len() <= 64 {
-        let conn = state.db.get().expect("pool db");
-        let _ = conn.execute(
-            "UPDATE projects SET name = ?1, git_repo = ?2 WHERE id = ?3 AND user_id = ?4",
-            rusqlite::params![name, repo, id, user.id],
-        );
+        if repo.is_empty() || is_safe_repo_url(&repo) {
+            let conn = state.db.get().expect("pool db");
+            let _ = conn.execute(
+                "UPDATE projects SET name = ?1, git_repo = ?2 WHERE id = ?3 AND user_id = ?4",
+                rusqlite::params![name, repo, id, user.id],
+            );
+        }
     }
     Redirect::to("/projects").into_response()
 }

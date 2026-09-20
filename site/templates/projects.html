@@ -21,7 +21,11 @@
       <small>{{ p.tasks }} task(s)</small>
     </div>
     {% if !p.git_repo.is_empty() %}
-    <p class="card-desc"><a href="{{ p.git_repo }}">{{ p.git_repo }}</a></p>
+    {% if p.git_repo_is_link() %}
+    <p class="card-desc"><a href="{{ p.git_repo }}" rel="noopener">{{ p.git_repo }}</a></p>
+    {% else %}
+    <p class="card-desc">{{ p.git_repo }}</p>
+    {% endif %}
     {% endif %}
     <form method="post" action="/projects/{{ p.id }}" class="rowform">
       <input name="name" value="{{ p.name }}" required maxlength="64" class="grow">

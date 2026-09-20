@@ -49,6 +49,7 @@ pub fn init_app_schema(conn: &Connection) -> anyhow::Result<()> {
             data       BLOB NOT NULL,
             created_at TEXT NOT NULL DEFAULT (datetime('now'))
         );
+        CREATE INDEX IF NOT EXISTS idx_files_task ON files(task_id);
         "#,
     )?;
 

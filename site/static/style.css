@@ -269,3 +269,31 @@ form.rowform button { padding: 0.3rem 0.6rem; }
 .diff-hdr { background: var(--bg); color: #6e7781; }
 /* Badge « token configuré » sur la carte projet */
 .token-badge { margin-left: 0.4rem; color: #6e7781; cursor: help; }
+
+/* Page de présentation (non connecté) */
+.landing-hero { text-align: center; padding: 2.5rem 1rem 1.5rem; }
+.landing-hero h1 { font-size: 2.4rem; margin: 0; }
+.landing-hero .tagline { font-size: 1.2rem; color: var(--muted); margin: 0.5rem 0 1rem; }
+.landing-hero .pitch { max-width: 680px; margin: 0 auto 1.4rem; }
+.landing-cta { display: flex; gap: 0.6rem; justify-content: center; flex-wrap: wrap; }
+.btn {
+  display: inline-block;
+  padding: 0.5rem 1.1rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--accent);
+  color: #0c1118;
+  font-weight: 600;
+  text-decoration: none;
+}
+.btn:hover { text-decoration: none; filter: brightness(1.08); }
+.btn-ghost { background: transparent; color: var(--accent); }
+.landing-preview { margin-top: 2.5rem; }
+.landing-preview > h2, .landing-feats > h2 { margin: 0.5rem 0 0.3rem; }
+.landing-preview .muted { color: var(--muted); margin: 0 0 1rem; }
+.landing-preview .board { pointer-events: none; user-select: none; opacity: 0.95; }
+.landing-preview .board .card { cursor: default; }
+.landing-feats { margin-top: 2.5rem; }
+.feat-list { max-width: 720px; padding-left: 1.2rem; }
+.feat-list li { margin-bottom: 0.5rem; }
+.landing-hero code, .landing-feats code { background: var(--panel); border: 1px solid var(--border); border-radius: 4px; padding: 0.05rem 0.3rem; }

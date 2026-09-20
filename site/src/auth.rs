@@ -80,6 +80,14 @@ pub struct AuthFormTemplate {
     pub error: Option<String>,
 }
 
+/// Page de présentation affichée à la racine quand l'utilisateur n'est pas connecté.
+#[derive(Template)]
+#[template(path = "landing.html")]
+pub struct LandingTemplate {
+    pub user: Option<CurrentUser>,
+    pub registration_enabled: bool,
+}
+
 pub async fn login_form() -> Response {
     render(&AuthFormTemplate {
         user: None,

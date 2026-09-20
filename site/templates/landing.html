@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+{% block title %}Tikedenn — kanban board for dev tasks{% endblock %}
+{% block content %}
+<section class="landing-hero">
+  <h1>Tikedenn</h1>
+  <p class="tagline">A small kanban board for your development tasks.</p>
+  <p class="pitch">
+    Track work from <em>draft</em> to <em>done</em> through six clear states, group tasks by
+    project, and link each task to a <strong>git branch</strong> to review the diff against
+    <code>main</code> — even for private repositories. No JavaScript framework, no account
+    sprawl: one small Rust server and one SQLite file.
+  </p>
+  <p class="landing-cta">
+    <a class="btn" href="/login">Log in</a>
+    {% if registration_enabled %}<a class="btn btn-ghost" href="/register">Create an account</a>{% endif %}
+    <a class="btn btn-ghost" href="https://github.com/smallbard/tikedenn" rel="noopener">Source code on GitHub</a>
+  </p>
+</section>
+
+<section class="landing-preview">
+  <h2>A taste of the dashboard</h2>
+  <p class="muted">An illustrative example — the real board is yours to fill.</p>
+  <div class="board">
+    <section class="col col-todo">
+      <header>To do <span class="count">2</span></header>
+      <div class="col-body">
+        <div class="card task t-todo">
+          <div class="card-head">
+            <strong class="card-title grow">Set up CI for the API</strong>
+            <span class="tag">api</span>
+          </div>
+          <p class="card-desc">GitHub Actions workflow with tests and lint.</p>
+          <div class="card-actions"><a class="linklike" href="#">Edit</a></div>
+        </div>
+        <div class="card task t-todo">
+          <div class="card-head">
+            <strong class="card-title grow">Write the onboarding email</strong>
+            <span class="tag">web</span>
+          </div>
+          <div class="card-actions"><a class="linklike" href="#">Edit</a></div>
+        </div>
+      </div>
+    </section>
+    <section class="col col-progress">
+      <header>In progress <span class="count">1</span></header>
+      <div class="col-body">
+        <div class="card task t-progress">
+          <div class="card-head">
+            <strong class="card-title grow">Add drag &amp; drop on the board</strong>
+            <span class="tag">web</span>
+            <span class="tag" title="Git branch">⎇ feat/dnd</span>
+          </div>
+          <p class="card-desc">HTML5 drag &amp; drop on the task cards.</p>
+          <div class="card-actions"><a class="linklike" href="#">Edit</a><a class="linklike" href="#">Diff</a></div>
+        </div>
+      </div>
+    </section>
+    <section class="col col-review">
+      <header>To review <span class="count">1</span></header>
+      <div class="col-body">
+        <div class="card task t-review">
+          <div class="card-head">
+            <strong class="card-title grow">Refactor the diff renderer</strong>
+            <span class="tag">web</span>
+            <span class="tag" title="Git branch">⎇ refactor/diff</span>
+          </div>
+          <div class="card-actions"><a class="linklike" href="#">Edit</a><a class="linklike" href="#">Diff</a></div>
+        </div>
+      </div>
+    </section>
+    <section class="col col-done">
+      <header>Done <span class="count">1</span></header>
+      <div class="col-body">
+        <div class="card task t-done">
+          <div class="card-head">
+            <strong class="card-title grow">Fix login redirect</strong>
+            <span class="tag">web</span>
+          </div>
+          <div class="card-actions"><a class="linklike" href="#">Edit</a></div>
+        </div>
+      </div>
+    </section>
+  </div>
+</section>
+
+<section class="landing-feats">
+  <h2>What's inside</h2>
+  <ul class="feat-list">
+    <li><strong>Six-state kanban</strong> — draft, to do, in progress, to review, to deploy, done; move cards by drag &amp; drop or by select.</li>
+    <li><strong>Projects</strong> — group your tasks and attach a git repository (with an optional token for private http(s) repos) to each one.</li>
+    <li><strong>Git branches &amp; diffs</strong> — any task can point at a branch; the diff against <code>main</code> is rendered file by file in one click.</li>
+    <li><strong>Attachments</strong> — files stored next to your tasks (10&nbsp;MB max each).</li>
+    <li><strong>Self-hosted &amp; boring</strong> — one Rust binary, one SQLite file, classic HTML forms. <a href="https://github.com/smallbard/tikedenn" rel="noopener">Browse the source on GitHub →</a></li>
+  </ul>
+</section>
+{% endblock %}

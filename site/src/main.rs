@@ -176,7 +176,7 @@ fn seed_default_admin(conn: &rusqlite::Connection) {
     }
 }
 
-/// Racine : tableau de bord si connecté, formulaire de connexion sinon.
+/// Racine : tableau de bord si connecté, page de présentation sinon.
 async fn index(
     State(state): State<AppState>,
     jar: SignedCookieJar,
@@ -184,6 +184,10 @@ async fn index(
     if auth::current_user(&state, &jar).is_some() {
         Redirect::to("/dashboard").into_response()
     } else {
-        auth::login_form().await
+        let registration_enabled = std::env::var("REGISTRATION").unwrap_or_default() != "0";
+        auth::render(&auth::LandingTemplate {
+            user: None,
+            registration_enabled,
+        })
     }
 }

@@ -265,15 +265,12 @@ fn build_board(
         None
     };
     let tasks = fetch_tasks(&conn, user.id, filter);
-    let statuses = status_choices();
     let mut columns = vec![];
     for (status, label) in STATUSES {
         let mut cards = vec![];
         for t in tasks.iter().filter(|t| t.status == status) {
             let card = TaskCardTemplate {
                 task: t,
-                projects: &projects,
-                statuses: &statuses,
                 filter: selected,
             };
             if let Ok(html) = card.render() {
@@ -290,25 +287,6 @@ fn build_board(
     (projects, columns)
 }
 
-/// Rendu du fragment de tableau (réponse htmx des déplacements/créations).
-fn render_board_fragment(state: &AppState, user: &CurrentUser, selected: i64) -> Response {
-    let (projects, columns) = build_board(state, user, selected);
-    auth::render(&BoardFragment {
-        columns,
-        user: Some(user.clone()),
-        _projects: projects,
-    })
-}
-
-#[derive(Template)]
-#[template(path = "board_frag.html")]
-pub struct BoardFragment {
-    pub user: Option<CurrentUser>,
-    pub columns: Vec<Column>,
-    // Non utilisé par le fragment, mais partagé avec la page (contexte askama).
-    pub _projects: Vec<ProjectRow>,
-}
-
 #[derive(Template)]
 #[template(path = "dashboard.html")]
 pub struct DashboardTemplate {
@@ -323,10 +301,20 @@ pub struct DashboardTemplate {
 #[template(path = "task_card.html")]
 pub struct TaskCardTemplate<'a> {
     pub task: &'a TaskRow,
+    /// Filtre projet actif, à préserver après l'édition.
+    pub filter: i64,
+}
+
+#[derive(Template)]
+#[template(path = "task_edit.html")]
+pub struct TaskEditTemplate<'a> {
+    pub user: Option<CurrentUser>,
+    pub task: &'a TaskRow,
     pub projects: &'a [ProjectRow],
     pub statuses: &'a [StatusChoice],
-    /// Filtre projet actif, à préserver lors des déplacements.
+    /// Filtre projet actif du tableau, à préserver au retour.
     pub filter: i64,
+    pub error: Option<String>,
 }
 
 #[derive(Template)]
@@ -352,6 +340,47 @@ pub async fn new_task_page(
         user: Some(user),
         projects,
         selected_project: selected,
+        error: q.error,
+    })
+}
+
+/// Redirection vers la page d'édition d'une tâche (avec message d'erreur optionnel).
+fn redirect_edit(id: i64, filter: i64, error: Option<&str>) -> Response {
+    let mut url = format!("/tasks/{id}/edit?project={filter}");
+    if let Some(e) = error {
+        url.push_str(&format!("&error={}", urlencode(e)));
+    }
+    Redirect::to(&url).into_response()
+}
+
+/// Page d'édition d'une tâche : le formulaire complet (titre, projet,
+/// description, état, fichiers joints, suppression).
+pub async fn edit_task_page(
+    State(state): State<AppState>,
+    Extension(user): Extension<CurrentUser>,
+    Path(id): Path<i64>,
+    Query(q): Query<BoardQuery>,
+) -> Response {
+    let conn = state.db.get().expect("pool db");
+    let task = match fetch_one_task(&conn, user.id, id) {
+        Ok(Some(t)) => t,
+        Ok(None) => return (axum::http::StatusCode::NOT_FOUND, "Task not found.").into_response(),
+        Err(_) => {
+            return (
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                "Could not load the task.",
+            )
+                .into_response()
+        }
+    };
+    let projects = fetch_projects(&conn, user.id);
+    let statuses = status_choices();
+    auth::render(&TaskEditTemplate {
+        user: Some(user),
+        task: &task,
+        projects: &projects,
+        statuses: &statuses,
+        filter: q.project.unwrap_or(0),
         error: q.error,
     })
 }
@@ -453,7 +482,7 @@ pub async fn create_task(
     Redirect::to(&url).into_response()
 }
 
-/// Déplace une tâche vers un autre état. Renvoie le fragment de tableau.
+/// Déplace une tâche vers un autre état. Redirige vers la page d'édition.
 pub async fn move_task(
     State(state): State<AppState>,
     Extension(user): Extension<CurrentUser>,
@@ -461,18 +490,14 @@ pub async fn move_task(
     Form(f): Form<MoveForm>,
 ) -> Response {
     if !STATUSES.iter().any(|(v, _)| *v == f.status) {
-        return (
-            axum::http::StatusCode::UNPROCESSABLE_ENTITY,
-            "Unknown task state.",
-        )
-            .into_response();
+        return redirect_edit(id, f.filter, Some("Unknown task state."));
     }
     let conn = state.db.get().expect("pool db");
     let _ = conn.execute(
         "UPDATE tasks SET status = ?1, updated_at = datetime('now') WHERE id = ?2 AND user_id = ?3",
         rusqlite::params![f.status, id, user.id],
     );
-    render_board_fragment(&state, &user, f.filter)
+    redirect_edit(id, f.filter, None)
 }
 
 #[derive(Deserialize)]
@@ -482,7 +507,7 @@ pub struct MoveForm {
     filter: i64,
 }
 
-/// Met à jour une tâche (titre, description, projet). Renvoie la carte.
+/// Met à jour une tâche (titre, description, projet). Redirige vers la page d'édition.
 pub async fn update_task(
     State(state): State<AppState>,
     Extension(user): Extension<CurrentUser>,
@@ -491,11 +516,7 @@ pub async fn update_task(
 ) -> Response {
     let title = f.title.trim().to_string();
     if title.is_empty() {
-        return (
-            axum::http::StatusCode::UNPROCESSABLE_ENTITY,
-            "Task title is required.",
-        )
-            .into_response();
+        return redirect_edit(id, f.filter, Some("Task title is required."));
     }
     let project_id: Option<i64> = if f.project > 0 {
         let conn = state.db.get().expect("pool db");
@@ -505,13 +526,7 @@ pub async fn update_task(
             |r| r.get(0),
         ) {
             Ok(p) => Some(p),
-            Err(_) => {
-                return (
-                    axum::http::StatusCode::UNPROCESSABLE_ENTITY,
-                    "Unknown project.",
-                )
-                    .into_response()
-            }
+            Err(_) => return redirect_edit(id, f.filter, Some("Unknown project.")),
         }
     } else {
         None
@@ -526,57 +541,13 @@ pub async fn update_task(
         )
         .is_err()
     {
-        return (
-            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-            "Could not update the task.",
-        )
-            .into_response();
+        return redirect_edit(id, f.filter, Some("Could not update the task."));
     }
-    render_task_card(&state, &user, id, f.filter)
+    redirect_edit(id, f.filter, None)
 }
 
-/// Rendu d'une carte individuelle (réponse htmx après édition).
-/// Une seule tâche est chargée (1 requête tâche + 1 requête fichiers).
-fn render_task_card(
-    state: &AppState,
-    user: &CurrentUser,
-    id: i64,
-    filter: i64,
-) -> Response {
-    let conn = state.db.get().expect("pool db");
-    let task = match fetch_one_task(&conn, user.id, id) {
-        Ok(Some(t)) => t,
-        Ok(None) => {
-            return (axum::http::StatusCode::NOT_FOUND, "Task not found.").into_response()
-        }
-        Err(_) => {
-            return (
-                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                "Could not load the task.",
-            )
-                .into_response()
-        }
-    };
-    let projects = fetch_projects(&conn, user.id);
-    let statuses = status_choices();
-    let card = TaskCardTemplate {
-        task: &task,
-        projects: &projects,
-        statuses: &statuses,
-        filter,
-    };
-    match card.render() {
-        Ok(html) => html.into_response(),
-        Err(_) => (
-            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-            "Template error.",
-        )
-            .into_response(),
-    }
-}
-
-/// Supprime une tâche (fichiers en cascade). Re-rend le tableau entier pour
-/// mettre à jour les compteurs de colonnes et l'état vide.
+/// Supprime une tâche (fichiers en cascade). Redirige vers le tableau
+/// (le filtre projet est préservé).
 pub async fn delete_task(
     State(state): State<AppState>,
     Extension(user): Extension<CurrentUser>,
@@ -600,7 +571,8 @@ pub async fn delete_task(
         )
             .into_response();
     }
-    render_board_fragment(&state, &user, f.filter)
+    let url = format!("/dashboard?project={}", f.filter);
+    Redirect::to(&url).into_response()
 }
 
 #[derive(Deserialize)]
@@ -630,7 +602,7 @@ pub async fn upload_file(
         .is_ok()
     };
     if !task_ok {
-        return Redirect::to("/dashboard").into_response();
+        return (axum::http::StatusCode::NOT_FOUND, "Task not found.").into_response();
     }
     let mut filter = 0i64;
     let mut stored = false;
@@ -710,11 +682,8 @@ pub async fn upload_file(
         )
             .into_response();
     }
-    if filter > 0 {
-        Redirect::to(&format!("/dashboard?project={filter}")).into_response()
-    } else {
-        Redirect::to("/dashboard").into_response()
-    }
+    // Retour sur la page d'édition de la tâche (filtre du tableau préservé).
+    Redirect::to(&format!("/tasks/{task_id}/edit?project={filter}")).into_response()
 }
 
 /// Téléchargement d'un fichier joint.

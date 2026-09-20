@@ -238,3 +238,8 @@ form.rowform {
 }
 form.rowform input { padding: 0.3rem 0.5rem; min-width: 130px; }
 form.rowform button { padding: 0.3rem 0.6rem; }
+
+/* Page d'édition d'une tâche */
+.form-actions { display: flex; gap: 0.5rem; align-items: center; }
+.files-section { margin-top: 1rem; border-top: 1px solid var(--border); padding-top: 0.8rem; }
+.files-section h2 { font-size: 1rem; margin: 0 0 0.5rem; }

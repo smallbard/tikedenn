@@ -145,6 +145,10 @@ button:hover { filter: brightness(1.1); }
   font-size: 0.85rem;
 }
 .col-body { padding: 0.7rem; display: flex; flex-direction: column; gap: 0.7rem; }
+/* Cartes déplaçables par glisser-déposer d'une colonne à l'autre. */
+.card.task { cursor: grab; }
+.card.task.dragging { opacity: 0.4; }
+.col.drag-over { outline: 2px dashed #4da3ff; outline-offset: -2px; }
 .col-body .empty { color: var(--muted); margin: 0; font-size: 0.9rem; }
 .col-draft > header { border-top: 3px solid #8f97a8; }
 .col-todo > header { border-top: 3px solid #4da3ff; }

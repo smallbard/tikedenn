@@ -16,4 +16,51 @@
 <a class="page-btn" href="/tasks/new?project={{ selected_project }}">New task</a>
 
 {% include "board_frag.html" %}
+
+<!-- Drag & drop : glisser une carte sur une colonne change son état
+     (même endpoint POST /tasks/{id}/move que le select des cartes). -->
+<script>
+(function () {
+  var board = document.getElementById('board');
+  if (!board) return;
+  board.addEventListener('dragstart', function (e) {
+    var card = e.target.closest('.card.task');
+    if (!card) return;
+    e.dataTransfer.setData('text/plain', card.dataset.id);
+    e.dataTransfer.effectAllowed = 'move';
+    card.classList.add('dragging');
+  });
+  board.addEventListener('dragend', function (e) {
+    var card = e.target.closest('.card.task');
+    if (card) card.classList.remove('dragging');
+  });
+  board.querySelectorAll('.col').forEach(function (col) {
+    col.addEventListener('dragover', function (e) {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      col.classList.add('drag-over');
+    });
+    col.addEventListener('dragleave', function (e) {
+      if (!col.contains(e.relatedTarget)) col.classList.remove('drag-over');
+    });
+    col.addEventListener('drop', async function (e) {
+      e.preventDefault();
+      col.classList.remove('drag-over');
+      var id = e.dataTransfer.getData('text/plain');
+      if (!id) return;
+      var card = document.querySelector('.card.task[data-id="' + id + '"]');
+      var body = new URLSearchParams();
+      body.set('status', col.dataset.status);
+      body.set('filter', card ? card.dataset.filter : 0);
+      var r = await fetch('/tasks/' + id + '/move', {
+        method: 'post',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: body.toString(),
+      });
+      if (r.ok) location.reload();
+      else alert('Move failed.');
+    });
+  });
+})();
+</script>
 {% endblock %}

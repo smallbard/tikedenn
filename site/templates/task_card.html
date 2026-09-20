@@ -1,4 +1,4 @@
-<div class="card task t-{{ task.status }}">
+<div class="card task t-{{ task.status }}" draggable="true" data-id="{{ task.id }}" data-filter="{{ filter }}">
   <div class="card-head">
     <strong class="card-title grow">{{ task.title }}</strong>
     {% if let Some(p) = task.project %}

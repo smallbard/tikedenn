@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}Diff — {{ task.title }} — Tikedenn{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>Branch diff</h1>
+  <a class="linklike" href="/tasks/{{ task.id }}/edit?project={{ task.project_id_or_zero() }}">← Back to the task</a>
+</div>
+<p class="diff-head">
+  <code>{{ task.branch }}</code> vs <code>{% if base.is_empty() %}main{% else %}{{ base }}{% endif %}</code>
+  {% if let Some(p) = task.project %}<span class="empty">— repo <code>{{ p.git_repo }}</code></span>{% endif %}
+</p>
+
+{% if let Some(e) = error %}
+<p class="error">{{ e }}</p>
+{% else if files.is_empty() %}
+<p class="empty">No difference between the branch and {% if base.is_empty() %}main{% else %}{{ base }}{% endif %}.</p>
+{% else %}
+<p class="empty">{{ files.len() }} file(s) changed.</p>
+{% for f in files %}
+<details class="diff-file"{% if loop.index == 1 %} open{% endif %}>
+  <summary>
+    {{ f.path }}
+    <span class="diff-stats">
+      <span class="diff-add-n">+{{ f.added }}</span> <span class="diff-del-n">−{{ f.deleted }}</span>
+    </span>
+  </summary>
+  {% if f.binary %}
+  <p class="empty">Binary file differs.</p>
+  {% else %}
+  <pre class="diff">{% for l in f.lines %}<span class="diff-{{ l.kind }}">{{ l.text }}</span>{% endfor %}</pre>
+  {% endif %}
+</details>
+{% endfor %}
+{% endif %}
+{% endblock %}

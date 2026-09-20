@@ -4,6 +4,9 @@
 <div class="page-head">
   <h1>Edit task</h1>
   <a class="linklike" href="/dashboard?project={{ filter }}">← Back to the board</a>
+  {% if !task.branch.is_empty() %}
+  <a class="linklike" href="/tasks/{{ task.id }}/diff">View branch diff (vs main)</a>
+  {% endif %}
 </div>
 
 {% if let Some(e) = error %}<p class="error">{{ e }}</p>{% endif %}
@@ -17,6 +20,7 @@
     <option value="{{ p.id }}" {% if p.id == task.project_id_or_zero() %}selected{% endif %}>{{ p.name }}</option>
     {% endfor %}
   </select>
+  <input name="branch" value="{{ task.branch }}" placeholder="Git branch (optional, e.g. feature/my-change)" maxlength="200" class="grow">
   <textarea name="description" rows="8" placeholder="Description / full specification">{{ task.description }}</textarea>
   <div class="form-actions"><button type="submit">Save</button></div>
 </form>

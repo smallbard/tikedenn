@@ -254,3 +254,16 @@ form.rowform button { padding: 0.3rem 0.6rem; }
 .form-actions { display: flex; gap: 0.5rem; align-items: center; }
 .files-section { margin-top: 1rem; border-top: 1px solid var(--border); padding-top: 0.8rem; }
 .files-section h2 { font-size: 1rem; margin: 0 0 0.5rem; }
+
+/* Page du diff branche vs main. */
+.diff-head code { background: var(--bg); padding: 0.1rem 0.35rem; border-radius: 4px; }
+.diff-file { border: 1px solid var(--border); border-radius: 6px; margin-bottom: 0.8rem; overflow: hidden; }
+.diff-file summary { padding: 0.5rem 0.8rem; background: var(--bg); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; cursor: pointer; }
+.diff-stats { float: right; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.85rem; }
+.diff-add-n { color: #1a7f37; }
+.diff-del-n { color: #cf222e; }
+.diff { margin: 0; padding: 0.3rem 0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.85rem; overflow-x: auto; }
+.diff span { display: block; white-space: pre; padding: 0 0.8rem; }
+.diff-add { background: #e6f4e6; color: #1a7f37; }
+.diff-del { background: #fdecec; color: #cf222e; }
+.diff-hdr { background: var(--bg); color: #6e7781; }

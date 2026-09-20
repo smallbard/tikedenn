@@ -4,11 +4,15 @@
     {% if let Some(p) = task.project %}
     <span class="tag" {% if !p.git_repo.is_empty() %}title="{{ p.git_repo }}"{% endif %}>{{ p.name }}</span>
     {% endif %}
+    {% if !task.branch.is_empty() %}
+    <span class="tag" title="Git branch">⎇ {{ task.branch }}</span>
+    {% endif %}
   </div>
   {% if !task.description_preview.is_empty() %}
   <p class="card-desc">{{ task.description_preview }}</p>
   {% endif %}
   <div class="card-actions">
     <a class="linklike" href="/tasks/{{ task.id }}/edit?project={{ filter }}">Edit</a>
+    {% if !task.branch.is_empty() %}<a class="linklike" href="/tasks/{{ task.id }}/diff">Diff</a>{% endif %}
   </div>
 </div>

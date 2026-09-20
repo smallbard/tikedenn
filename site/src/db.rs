@@ -26,12 +26,14 @@ pub fn init_app_schema(conn: &Connection) -> anyhow::Result<()> {
         );
 
         -- Tâches du tableau kanban : draft → todo → progress → review → deploy → done.
+        -- `branch` : branche git optionnelle (différentielle vs main, page /tasks/{id}/diff).
         CREATE TABLE IF NOT EXISTS tasks (
             id          INTEGER PRIMARY KEY,
             user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
             project_id  INTEGER REFERENCES projects(id) ON DELETE SET NULL,
             status      TEXT NOT NULL DEFAULT 'draft'
                         CHECK (status IN ('draft','todo','progress','review','deploy','done')),
+            branch      TEXT NOT NULL DEFAULT '',
             title       TEXT NOT NULL,
             description TEXT NOT NULL DEFAULT '',
             created_at  TEXT NOT NULL DEFAULT (datetime('now')),
@@ -87,12 +89,15 @@ pub fn init_app_schema(conn: &Connection) -> anyhow::Result<()> {
                 project_id  INTEGER REFERENCES projects(id) ON DELETE SET NULL,
                 status      TEXT NOT NULL DEFAULT 'draft'
                             CHECK (status IN ('draft','todo','progress','review','deploy','done')),
+                branch      TEXT NOT NULL DEFAULT '',
                 title       TEXT NOT NULL,
                 description TEXT NOT NULL DEFAULT '',
                 created_at  TEXT NOT NULL DEFAULT (datetime('now')),
                 updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
             );
-            INSERT INTO tasks_new SELECT * FROM tasks;
+            -- L'ancienne table peut ne pas avoir `branch` : liste explicite.
+            INSERT INTO tasks_new (id, user_id, project_id, status, title, description, created_at, updated_at)
+            SELECT id, user_id, project_id, status, title, description, created_at, updated_at FROM tasks;
             DROP TABLE tasks;
             ALTER TABLE tasks_new RENAME TO tasks;
             CREATE INDEX idx_tasks_user_status ON tasks(user_id, status);
@@ -100,6 +105,19 @@ pub fn init_app_schema(conn: &Connection) -> anyhow::Result<()> {
             PRAGMA foreign_keys = ON;
             "#,
         )?;
+    }
+
+    // Migration : schémas antérieurs à la colonne `branch` (branche git
+    // optionnelle liée à la tâche).
+    let has_branch = conn
+        .prepare("PRAGMA table_info(tasks)")
+        .and_then(|mut st| {
+            st.query_map([], |r| r.get::<_, String>(1))
+                .map(|it| it.flatten().any(|n| n == "branch"))
+        })
+        .unwrap_or(true);
+    if !has_branch {
+        let _ = conn.execute("ALTER TABLE tasks ADD COLUMN branch TEXT NOT NULL DEFAULT ''", []);
     }
     Ok(())
 }

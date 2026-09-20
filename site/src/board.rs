@@ -11,6 +11,8 @@ use axum::{
     response::{IntoResponse, Redirect, Response},
     Form,
 };
+use git2::{DiffFlags, Patch, Repository};
+use rand::Rng;
 use serde::Deserialize;
 use std::collections::HashMap;
 
@@ -69,6 +71,8 @@ pub struct TaskRow {
     pub project_id: Option<i64>,
     pub project: Option<ProjectRow>,
     pub status: String,
+    /// Branche git optionnelle associée à la tâche (diff vs main).
+    pub branch: String,
     pub title: String,
     pub description: String,
     /// Première ligne de la description, pour l'affichage compact de la carte.
@@ -180,15 +184,15 @@ fn fetch_files_for_board(
 }
 
 /// Colonnes communes à `fetch_tasks` et `fetch_one_task` (lues par `task_from_row`).
-const TASK_SELECT: &str = "SELECT t.id, t.project_id, p.id, p.name, p.git_repo, t.status, t.title,
+const TASK_SELECT: &str = "SELECT t.id, t.project_id, p.id, p.name, p.git_repo, t.status, t.branch, t.title,
                                   t.description, t.created_at
                            FROM tasks t LEFT JOIN projects p ON p.id = t.project_id";
 
 /// Construit une `TaskRow` (sans ses fichiers) depuis une ligne de `TASK_SELECT`.
 fn task_from_row(r: &rusqlite::Row) -> rusqlite::Result<TaskRow> {
     // Colonnes : 0=t.id, 1=t.project_id, 2=p.id, 3=p.name, 4=p.git_repo,
-    //           5=t.status, 6=t.title, 7=t.description, 8=t.created_at
-    let desc: String = r.get(7)?;
+    //           5=t.status, 6=t.branch, 7=t.title, 8=t.description, 9=t.created_at
+    let desc: String = r.get(8)?;
     Ok(TaskRow {
         id: r.get(0)?,
         project_id: r.get::<_, Option<i64>>(1)?,
@@ -202,10 +206,11 @@ fn task_from_row(r: &rusqlite::Row) -> rusqlite::Result<TaskRow> {
             None
         },
         status: r.get(5)?,
-        title: r.get(6)?,
+        branch: r.get(6)?,
+        title: r.get(7)?,
         description_preview: first_line_preview(&desc),
         description: desc,
-        created_at: r.get(8)?,
+        created_at: r.get(9)?,
         files: vec![],
     })
 }
@@ -418,9 +423,24 @@ pub struct TaskForm {
     /// Id du projet (0 = aucun) pour la nouvelle tâche.
     #[serde(default)]
     project: i64,
+    /// Branche git optionnelle associée à la tâche.
+    #[serde(default)]
+    branch: String,
     /// Filtre projet actif du tableau, à préserver après la création (0 = tous).
     #[serde(default)]
     filter: i64,
+}
+
+/// Nom de branche git raisonnablement sûr (ne sert qu'aux refs git2, mais on
+/// évite les noms pathologiques : ref parents, slash initial, etc.).
+pub fn is_safe_branch(b: &str) -> bool {
+    let b = b.trim();
+    !b.is_empty()
+        && b.len() <= 200
+        && !b.starts_with(['-', '.', '/'])
+        && !b.ends_with('/')
+        && !b.contains("..")
+        && b.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '/' | '_'))
 }
 
 /// Encode une chaîne pour un paramètre de query.
@@ -469,12 +489,16 @@ pub async fn create_task(
     } else {
         None
     };
+    let branch = f.branch.trim().to_string();
+    if !branch.is_empty() && !is_safe_branch(&branch) {
+        return redirect_new_task(f.filter, "Invalid branch name.");
+    }
     let conn = state.db.get().expect("pool db");
     if conn
         .execute(
-            "INSERT INTO tasks (user_id, project_id, status, title, description)
-             VALUES (?1, ?2, 'draft', ?3, ?4)",
-            rusqlite::params![user.id, project_id, title, f.description.trim()],
+            "INSERT INTO tasks (user_id, project_id, status, branch, title, description)
+             VALUES (?1, ?2, 'draft', ?3, ?4, ?5)",
+            rusqlite::params![user.id, project_id, branch, title, f.description.trim()],
         )
         .is_err()
     {
@@ -520,6 +544,10 @@ pub async fn update_task(
     if title.is_empty() {
         return redirect_edit(id, f.filter, Some("Task title is required."));
     }
+    let branch = f.branch.trim().to_string();
+    if !branch.is_empty() && !is_safe_branch(&branch) {
+        return redirect_edit(id, f.filter, Some("Invalid branch name."));
+    }
     let project_id: Option<i64> = if f.project > 0 {
         let conn = state.db.get().expect("pool db");
         match conn.query_row(
@@ -536,10 +564,10 @@ pub async fn update_task(
     let conn = state.db.get().expect("pool db");
     if conn
         .execute(
-            "UPDATE tasks SET title = ?1, description = ?2, project_id = ?3,
+            "UPDATE tasks SET title = ?1, description = ?2, project_id = ?3, branch = ?4,
              updated_at = datetime('now')
-             WHERE id = ?4 AND user_id = ?5",
-            rusqlite::params![title, f.description.trim(), project_id, id, user.id],
+             WHERE id = ?5 AND user_id = ?6",
+            rusqlite::params![title, f.description.trim(), project_id, branch, id, user.id],
         )
         .is_err()
     {
@@ -925,4 +953,229 @@ pub async fn delete_project(
         );
     }
     Redirect::to("/projects").into_response()
+}
+
+// ===== Diff de la branche d'une tâche vs main (git2) =======================
+
+/// Une ligne d'un diff unifié.
+pub struct DiffLine {
+    /// "add" | "del" | "ctx" | "hdr".
+    pub kind: &'static str,
+    pub text: String,
+}
+
+/// Un fichier modifié, avec ses lignes de diff.
+pub struct DiffFile {
+    pub path: String,
+    pub added: usize,
+    pub deleted: usize,
+    pub binary: bool,
+    pub lines: Vec<DiffLine>,
+}
+
+#[derive(Template)]
+#[template(path = "task_diff.html")]
+pub struct TaskDiffTemplate<'a> {
+    pub user: Option<CurrentUser>,
+    pub task: &'a TaskRow,
+    /// Branche de base réellement utilisée (main, master…).
+    pub base: String,
+    pub files: Vec<DiffFile>,
+    pub error: Option<String>,
+}
+
+/// Trouve la première ref existante parmi `pairs` (nom affiché, ref) et renvoie
+/// son commit.
+fn find_commit_named<'a>(
+    repo: &'a Repository,
+    pairs: &[(&str, &str)],
+) -> Option<(String, git2::Commit<'a>)> {
+    for (name, refname) in pairs {
+        if let Ok(r) = repo.find_reference(refname) {
+            if let Ok(c) = r.peel_to_commit() {
+                return Some((name.to_string(), c));
+            }
+        }
+    }
+    None
+}
+
+/// Clone le dépôt dans un répertoire temporaire et calcule le diff
+/// (arbres de commits) `branch` vs la branche de base (main, sinon master).
+/// Renvoie (nom de la base, fichiers de la diff).
+fn compute_branch_diff(
+    repo_url: &str,
+    branch: &str,
+    workdir: &std::path::Path,
+) -> Result<(String, Vec<DiffFile>), String> {
+    let repo = Repository::clone(repo_url, workdir)
+        .map_err(|e| format!("Could not clone {repo_url}: {e}"))?;
+    let (base, base_commit) = find_commit_named(
+        &repo,
+        &[
+            ("main", "refs/remotes/origin/main"),
+            ("main", "refs/heads/main"),
+            ("master", "refs/remotes/origin/master"),
+            ("master", "refs/heads/master"),
+        ],
+    )
+    .ok_or_else(|| "Base branch not found (main / master).".to_string())?;
+    let (_, head_commit) = find_commit_named(
+        &repo,
+        &[
+            (branch, &format!("refs/heads/{branch}")),
+            (branch, &format!("refs/remotes/origin/{branch}")),
+        ],
+    )
+    .ok_or_else(|| format!("Branch '{branch}' not found in the repository."))?;
+
+    let base_tree = base_commit
+        .tree()
+        .map_err(|e| format!("Could not read the base tree: {e}"))?;
+    let head_tree = head_commit
+        .tree()
+        .map_err(|e| format!("Could not read the branch tree: {e}"))?;
+    let diff = repo
+        .diff_tree_to_tree(Some(&base_tree), Some(&head_tree), None)
+        .map_err(|e| format!("Could not compute the diff: {e}"))?;
+
+    let mut files = vec![];
+    for (idx, delta) in diff.deltas().enumerate() {
+        let path = delta
+            .new_file()
+            .path()
+            .or_else(|| delta.old_file().path())
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "?".to_string());
+        // Binaire, ou patch texte indisponible : on n'affiche pas le contenu.
+        if delta.flags().contains(DiffFlags::BINARY)
+            || !matches!(Patch::from_diff(&diff, idx), Ok(Some(_)))
+        {
+            files.push(DiffFile {
+                path,
+                added: 0,
+                deleted: 0,
+                binary: true,
+                lines: vec![],
+            });
+            continue;
+        }
+        let patch = Patch::from_diff(&diff, idx).unwrap().unwrap();
+        let mut lines = vec![];
+        let (mut added, mut deleted) = (0usize, 0usize);
+        for h in 0..patch.num_hunks() {
+            let (_hunk, num_lines) = patch
+                .hunk(h)
+                .map_err(|e| format!("Could not read a diff hunk: {e}"))?;
+            for l in 0..num_lines {
+                let line = patch
+                    .line_in_hunk(h, l)
+                    .map_err(|e| format!("Could not read a diff line: {e}"))?;
+                let (kind, is_add, is_del) = match line.origin() {
+                    '+' => ("add", true, false),
+                    '-' => ("del", false, true),
+                    ' ' | '=' | '>' | '<' => ("ctx", false, false),
+                    _ => ("hdr", false, false),
+                };
+                if is_add {
+                    added += 1;
+                }
+                if is_del {
+                    deleted += 1;
+                }
+                lines.push(DiffLine {
+                    kind,
+                    text: String::from_utf8_lossy(line.content()).trim_end().to_string(),
+                });
+            }
+        }
+        files.push(DiffFile {
+            path,
+            added,
+            deleted,
+            binary: false,
+            lines,
+        });
+    }
+    Ok((base, files))
+}
+
+/// Page du diff entre la branche de la tâche et main : clone temporaire du
+/// dépôt git du projet (git2), rendu des différentiels par fichier.
+pub async fn task_diff_page(
+    State(state): State<AppState>,
+    Extension(user): Extension<CurrentUser>,
+    Path(id): Path<i64>,
+) -> Response {
+    let conn = state.db.get().expect("pool db");
+    let task = match fetch_one_task(&conn, user.id, id) {
+        Ok(Some(t)) => t,
+        Ok(None) => {
+            return (axum::http::StatusCode::NOT_FOUND, "Task not found.").into_response()
+        }
+        Err(_) => {
+            return (
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                "Could not load the task.",
+            )
+                .into_response()
+        }
+    };
+    let error_response = |status: axum::http::StatusCode, msg: &str| -> Response {
+        let mut resp = auth::render(&TaskDiffTemplate {
+            user: Some(user.clone()),
+            task: &task,
+            base: String::new(),
+            files: vec![],
+            error: Some(msg.to_string()),
+        });
+        *resp.status_mut() = status;
+        resp
+    };
+
+    if task.branch.trim().is_empty() {
+        return error_response(
+            axum::http::StatusCode::NOT_FOUND,
+            "No branch associated with this task. Edit the task to set a branch.",
+        );
+    }
+    if !is_safe_branch(&task.branch) {
+        return error_response(
+            axum::http::StatusCode::UNPROCESSABLE_ENTITY,
+            "Invalid branch name.",
+        );
+    }
+    let project = match task.project.as_ref() {
+        Some(p) => p,
+        None => {
+            return error_response(
+                axum::http::StatusCode::NOT_FOUND,
+                "This task has no project — the diff needs a git repository.",
+            )
+        }
+    };
+    if project.git_repo.trim().is_empty() || !is_safe_repo_url(&project.git_repo) {
+        return error_response(
+            axum::http::StatusCode::UNPROCESSABLE_ENTITY,
+            "The project has no valid git repository.",
+        );
+    }
+
+    let workdir = std::env::temp_dir().join(format!(
+        "tikedenn-git-{id}-{}",
+        rand::thread_rng().gen::<u32>()
+    ));
+    let res = compute_branch_diff(project.git_repo.trim(), task.branch.trim(), &workdir);
+    let _ = std::fs::remove_dir_all(&workdir); // nettoyage best effort
+
+    match res {
+        Ok((base, files)) => auth::render(&TaskDiffTemplate {
+            user: Some(user),
+            task: &task,
+            base,
+            files,
+            error: None,
+        }),
+        Err(e) => error_response(axum::http::StatusCode::INTERNAL_SERVER_ERROR, &e),
+    }
 }

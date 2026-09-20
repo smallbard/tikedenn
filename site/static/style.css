@@ -291,7 +291,9 @@ form.rowform button { padding: 0.3rem 0.6rem; }
 .landing-preview { margin-top: 2.5rem; }
 .landing-preview > h2, .landing-feats > h2 { margin: 0.5rem 0 0.3rem; text-align: center; }
 .landing-preview .muted { color: var(--muted); margin: 0 0 1rem; text-align: center; }
-.landing-preview .board { pointer-events: none; user-select: none; opacity: 0.95; margin: 0 auto; max-width: 1000px; }
+.landing-preview .board { pointer-events: none; user-select: none; opacity: 0.95; margin: 0 auto; max-width: 1100px; grid-template-columns: repeat(5, 1fr); }
+@media (max-width: 900px) { .landing-preview .board { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 560px) { .landing-preview .board { grid-template-columns: 1fr; } }
 .landing-preview .board .card { cursor: default; }
 .landing-feats { margin-top: 2.5rem; }
 .feat-list { max-width: 720px; padding-left: 1.2rem; margin: 0 auto; }

@@ -50,8 +50,8 @@ fn load_key(path: &PathBuf) -> anyhow::Result<Key> {
 
 /// Garde d'authentification : toute route sous ce middleware exige un cookie
 /// de session valide, sinon redirection vers /login (avec ?next= pour y
-/// revenir après). Les routes /login, /register, /logout et /static restent
-/// publiques.
+/// revenir après). Les routes /login, /register (si activée), /logout et
+/// /static restent publiques.
 async fn require_auth(
     State(state): State<AppState>,
     jar: SignedCookieJar,
@@ -90,11 +90,21 @@ async fn main() -> anyhow::Result<()> {
 
     let state = AppState { db: pool, key };
 
-    let public = Router::new()
+    // REGISTRATION=0 désactive l'auto-inscription (routes /register) ;
+    // activée par défaut (utile pour le dev local). Les templates masquent
+    // les liens « Sign up » quand la variable vaut 0.
+    let registration_enabled =
+        std::env::var("REGISTRATION").unwrap_or_default() != "0";
+    let mut public = Router::new()
         .route("/login", get(auth::login_form).post(auth::login))
-        //.route("/register", get(auth::register_form).post(auth::register))
         .route("/logout", post(auth::logout))
         .nest_service("/static", ServeDir::new(static_dir));
+    if registration_enabled {
+        public = public.route(
+            "/register",
+            get(auth::register_form).post(auth::register),
+        );
+    }
 
     // Zone protégée : seule l'accueil (/) décide entre connexion et tableau
     // de bord, tout le reste est derrière require_auth.

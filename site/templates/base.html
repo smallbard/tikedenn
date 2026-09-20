@@ -19,7 +19,8 @@
     <form method="post" action="/logout"><button class="linklike">Log out</button></form>
   {% else %}
     <a href="/login">Log in</a>
-    <a href="/register">Sign up</a>
+    <!-- Lien masqué quand REGISTRATION=0 (route /register absente). -->
+    {% if std::env::var("REGISTRATION").unwrap_or_default() != "0" %}<a href="/register">Sign up</a>{% endif %}
   {% endif %}
 </nav>
 <main>

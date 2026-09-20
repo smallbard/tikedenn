@@ -118,7 +118,10 @@ button:hover { filter: brightness(1.1); }
 @media (max-width: 900px) { .board { grid-template-columns: repeat(2, 1fr); } }
 @media (max-width: 560px) { .board { grid-template-columns: 1fr; } }
 /* Écrans larges : toutes les colonnes sur la même ligne. */
-@media (min-width: 1400px) { .board { grid-template-columns: repeat(6, 1fr); } }
+@media (min-width: 1400px) {
+  .board { grid-template-columns: repeat(6, 1fr); }
+  main { max-width: 1600px; }
+}
 
 .col {
   background: var(--panel);

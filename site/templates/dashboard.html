@@ -1,19 +1,29 @@
 {% extends "base.html" %}
-{% block title %}Dashboard — Tikedenn{% endblock %}
+{% block title %}Board — Tikedenn{% endblock %}
 {% block content %}
-<h1>Dashboard</h1>
+<div class="page-head">
+  <h1>Board</h1>
+  <form method="get" class="rowform">
+    <select name="project" onchange="this.form.submit()">
+      <option value="">All projects</option>
+      {% for p in projects %}
+      <option value="{{ p.id }}" {% if p.id == selected_project %}selected{% endif %}>{{ p.name }}</option>
+      {% endfor %}
+    </select>
+  </form>
+</div>
 
-<form method="post" action="/notes" class="noteform"
-      hx-post="/notes" hx-target="ul#notes" hx-swap="beforeend"
-      hx-on::after-request="if(event.detail.successful) this.reset()">
-  <input name="title" placeholder="New note…" required maxlength="200">
-  <textarea name="body" placeholder="Content (optional)" rows="3"></textarea>
-  <button>Add</button>
+<form method="post" action="/tasks" hx-post="/tasks" hx-target="#board" hx-swap="outerHTML" class="new-task">
+  <input name="title" placeholder="New task title…" required maxlength="200" class="grow">
+  <select name="project">
+    <option value="0">No project</option>
+    {% for p in projects %}
+    <option value="{{ p.id }}" {% if p.id == selected_project %}selected{% endif %}>{{ p.name }}</option>
+    {% endfor %}
+  </select>
+  <textarea name="description" rows="2" placeholder="Description / full specification (optional)"></textarea>
+  <button type="submit">Create in Draft</button>
 </form>
 
-<h2>Notes</h2>
-<ul id="notes">
-  {{ notes_html|safe }}
-  {% if is_empty %}<li class="empty">No notes yet — add the first one above.</li>{% endif %}
-</ul>
+{% include "board_frag.html" %}
 {% endblock %}

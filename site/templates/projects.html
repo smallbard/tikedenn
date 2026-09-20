@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}Projects — Tikedenn{% endblock %}
+{% block content %}
+<h1>Projects</h1>
+{% if let Some(e) = error %}<p class="error">{{ e }}</p>{% endif %}
+
+<form method="post" action="/projects" class="rowform new-project">
+  <input name="name" placeholder="Project name" required maxlength="64" class="grow">
+  <input name="git_repo" placeholder="Git repository URL (optional)" class="grow">
+  <button type="submit">Add</button>
+</form>
+
+{% if projects.is_empty() %}
+<p class="empty">No project yet. Projects group tasks and link to a git repository.</p>
+{% else %}
+<div class="projects">
+  {% for p in projects %}
+  <div class="card project">
+    <div class="card-head">
+      <strong class="grow">{{ p.name }}</strong>
+      <small>{{ p.tasks }} task(s)</small>
+    </div>
+    {% if !p.git_repo.is_empty() %}
+    <p class="card-desc"><a href="{{ p.git_repo }}">{{ p.git_repo }}</a></p>
+    {% endif %}
+    <form method="post" action="/projects/{{ p.id }}" class="rowform">
+      <input name="name" value="{{ p.name }}" required maxlength="64" class="grow">
+      <input name="git_repo" value="{{ p.git_repo }}" placeholder="Git repository URL" class="grow">
+      <button type="submit">Save</button>
+    </form>
+    <form method="post" action="/projects/{{ p.id }}/delete" class="rowform"
+          onsubmit="return confirm('Delete project {{ p.name }}? Its tasks are kept without a project.')">
+      <button type="submit" class="linklike danger">Delete</button>
+    </form>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+{% endblock %}

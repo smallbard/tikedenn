@@ -55,7 +55,7 @@ pub async fn users(
     if let Ok(conn) = state.db.get() {
         if let Ok(mut st) = conn.prepare(
             "SELECT u.id, u.username, u.email, u.created_at,
-                    (SELECT COUNT(*) FROM notes n WHERE n.user_id = u.id),
+                    (SELECT COUNT(*) FROM tasks t WHERE t.user_id = u.id),
                     u.is_admin
              FROM users u ORDER BY u.created_at DESC, u.id DESC",
         ) {

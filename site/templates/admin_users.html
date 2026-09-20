@@ -4,7 +4,7 @@
 <h1>Users <small>({{ users.len() }})</small></h1>
 {% if let Some(e) = error %}<p class="error">{{ e }}</p>{% endif %}
 <table class="user-list">
-  <tr><th>Name</th><th>E-mail</th><th>Registered</th><th>Notes</th><th></th><th></th></tr>
+  <tr><th>Name</th><th>E-mail</th><th>Registered</th><th>Tasks</th><th></th><th></th></tr>
   {% for u in users %}
   <tr>
     <td>{{ u.username }}{% if u.is_admin %} <small>(admin)</small>{% endif %}{% if u.is_self %} <small>(you)</small>{% endif %}</td>

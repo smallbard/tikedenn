@@ -15,11 +15,38 @@ pub fn init_app_schema(conn: &Connection) -> anyhow::Result<()> {
             created_at TEXT NOT NULL DEFAULT (datetime('now'))
         );
 
-        CREATE TABLE IF NOT EXISTS notes (
+        -- Un projet regroupe des tâches et référence un dépôt git.
+        CREATE TABLE IF NOT EXISTS projects (
             id         INTEGER PRIMARY KEY,
             user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-            title      TEXT NOT NULL,
-            body       TEXT NOT NULL DEFAULT '',
+            name       TEXT NOT NULL,
+            git_repo   TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            UNIQUE (user_id, name)
+        );
+
+        -- Tâches du tableau kanban : draft → todo → progress → done.
+        CREATE TABLE IF NOT EXISTS tasks (
+            id          INTEGER PRIMARY KEY,
+            user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            project_id  INTEGER REFERENCES projects(id) ON DELETE SET NULL,
+            status      TEXT NOT NULL DEFAULT 'draft'
+                        CHECK (status IN ('draft','todo','progress','done')),
+            title       TEXT NOT NULL,
+            description TEXT NOT NULL DEFAULT '',
+            created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_tasks_user_status ON tasks(user_id, status);
+
+        -- Pièces jointes (stockées en BLOB dans SQLite).
+        CREATE TABLE IF NOT EXISTS files (
+            id         INTEGER PRIMARY KEY,
+            task_id    INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+            name       TEXT NOT NULL,
+            size       INTEGER NOT NULL,
+            mime       TEXT NOT NULL DEFAULT '',
+            data       BLOB NOT NULL,
             created_at TEXT NOT NULL DEFAULT (datetime('now'))
         );
         "#,

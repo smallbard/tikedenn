@@ -1,7 +1,7 @@
 mod admin;
 mod auth;
+mod board;
 mod db;
-mod notes;
 
 use axum::{
     extract::{Request, State},
@@ -97,9 +97,17 @@ async fn main() -> anyhow::Result<()> {
     // Zone protégée : seule l'accueil (/) décide entre connexion et tableau
     // de bord, tout le reste est derrière require_auth.
     let protected = Router::new()
-        .route("/dashboard", get(notes::dashboard))
-        .route("/notes", post(notes::create).get(notes::list))
-        .route("/notes/{id}/delete", post(notes::delete))
+        .route("/dashboard", get(board::dashboard))
+        .route("/projects", get(board::projects_page).post(board::create_project))
+        .route("/projects/{id}", post(board::update_project))
+        .route("/projects/{id}/delete", post(board::delete_project))
+        .route("/tasks", post(board::create_task))
+        .route("/tasks/{id}", post(board::update_task))
+        .route("/tasks/{id}/move", post(board::move_task))
+        .route("/tasks/{id}/delete", post(board::delete_task))
+        .route("/tasks/{id}/files", post(board::upload_file))
+        .route("/files/{id}", get(board::download_file))
+        .route("/files/{id}/delete", post(board::delete_file))
         .route("/admin/users", get(admin::users))
         .route("/admin/users/{id}/delete", post(admin::delete_user))
         .route("/admin/users/{id}/password", post(admin::set_password))

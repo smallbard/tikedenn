@@ -1,0 +1,14 @@
+<div class="board">
+  {% for c in columns %}
+  <section class="col col-{{ c.status }}">
+    <header>{{ c.label }} <span class="count">{{ c.count }}</span></header>
+    <div class="col-body">
+      {% if c.cards_html.is_empty() %}
+      <p class="empty">No task.</p>
+      {% else %}
+      {{ c.cards_html|safe }}
+      {% endif %}
+    </div>
+  </section>
+  {% endfor %}
+</div>

@@ -9,7 +9,9 @@
 </head>
 <body>
 <nav>
-  <a class="brand" href="/">Tikedenn</a>
+  <a class="brand" href="/dashboard">Tikedenn</a>
+  <a href="/dashboard">Board</a>
+  <a href="/projects">Projects</a>
   <span class="spacer"></span>
   {% if let Some(u) = user %}
     {% if u.is_admin %}<a href="/admin/users">Admin</a>{% endif %}
@@ -23,5 +25,12 @@
 <main>
 {% block content %}{% endblock %}
 </main>
+<!-- Affiche une alerte quand une requête htmx échoue (4xx/5xx). -->
+<script>
+document.body.addEventListener('htmx:responseError', function (e) {
+  var r = e.detail && e.detail.response;
+  if (r) alert((r.responseText || r.statusText || 'Request failed').trim());
+});
+</script>
 </body>
 </html>

@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="fr">
+<html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -13,10 +13,10 @@
   <span class="spacer"></span>
   {% if let Some(u) = user %}
     <span class="who">{{ u }}</span>
-    <form method="post" action="/logout"><button class="linklike">Déconnexion</button></form>
+    <form method="post" action="/logout"><button class="linklike">Log out</button></form>
   {% else %}
-    <a href="/login">Connexion</a>
-    <a href="/register">Inscription</a>
+    <a href="/login">Log in</a>
+    <a href="/register">Sign up</a>
   {% endif %}
 </nav>
 <main>

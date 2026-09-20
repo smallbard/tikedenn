@@ -110,7 +110,7 @@ async fn main() -> anyhow::Result<()> {
         .with_state(state);
 
     let addr = std::env::var("BIND").unwrap_or_else(|_| "127.0.0.1:3002".into());
-    println!("Tikedenn sur http://{addr}");
+    println!("Tikedenn on http://{addr}");
     let listener = tokio::net::TcpListener::bind(&addr).await?;
     axum::serve(listener, router).await?;
     Ok(())

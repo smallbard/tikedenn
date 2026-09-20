@@ -106,7 +106,7 @@ pub async fn create(
     if title.is_empty() {
         return (
             axum::http::StatusCode::UNPROCESSABLE_ENTITY,
-            "Le titre de la note ne peut pas être vide.",
+            "Note title cannot be empty.",
         )
             .into_response();
     }

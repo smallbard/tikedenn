@@ -1,19 +1,19 @@
 {% extends "base.html" %}
-{% block title %}Tableau de bord — Tikedenn{% endblock %}
+{% block title %}Dashboard — Tikedenn{% endblock %}
 {% block content %}
-<h1>Tableau de bord</h1>
+<h1>Dashboard</h1>
 
 <form method="post" action="/notes" class="noteform"
       hx-post="/notes" hx-target="ul#notes" hx-swap="beforeend"
       hx-on::after-request="if(event.detail.successful) this.reset()">
-  <input name="title" placeholder="Nouvelle note…" required maxlength="200">
-  <textarea name="body" placeholder="Contenu (optionnel)" rows="3"></textarea>
-  <button>Ajouter</button>
+  <input name="title" placeholder="New note…" required maxlength="200">
+  <textarea name="body" placeholder="Content (optional)" rows="3"></textarea>
+  <button>Add</button>
 </form>
 
 <h2>Notes</h2>
 <ul id="notes">
   {{ notes_html|safe }}
-  {% if is_empty %}<li class="empty">Aucune note — ajoutez la première ci-dessus.</li>{% endif %}
+  {% if is_empty %}<li class="empty">No notes yet — add the first one above.</li>{% endif %}
 </ul>
 {% endblock %}

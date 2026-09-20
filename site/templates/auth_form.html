@@ -1,11 +1,11 @@
 {% extends "base.html" %}
-{% block title %}{% if is_register %}Inscription — Tikedenn{% else %}Connexion — Tikedenn{% endif %}{% endblock %}
+{% block title %}{% if is_register %}Sign up — Tikedenn{% else %}Log in — Tikedenn{% endif %}{% endblock %}
 {% block content %}
-<h1>{% if is_register %}Inscription{% else %}Connexion{% endif %}</h1>
+<h1>{% if is_register %}Sign up{% else %}Log in{% endif %}</h1>
 {% if let Some(e) = error %}<p class="error">{{ e }}</p>{% endif %}
 <form method="post" action="{% if is_register %}/register{% else %}/login{% endif %}" class="authform">
   {% if let Some(n) = next %}<input type="hidden" name="next" value="{{ n }}">{% endif %}
-  <label>Pseudo (ou e-mail pour la connexion)
+  <label>Username (or e-mail to log in)
     <input name="username" required minlength="3" maxlength="64" autofocus>
   </label>
   {% if is_register %}
@@ -13,10 +13,10 @@
     <input name="email" type="email" required>
   </label>
   {% endif %}
-  <label>Mot de passe
+  <label>Password
     <input name="password" type="password" required minlength="8">
   </label>
-  <button>{% if is_register %}Créer mon compte{% else %}Se connecter{% endif %}</button>
+  <button>{% if is_register %}Create account{% else %}Sign in{% endif %}</button>
 </form>
-<p>{% if is_register %}Déjà un compte ? <a href="/login">Connexion</a>{% else %}Pas de compte ? <a href="/register">Inscription</a>{% endif %}</p>
+<p>{% if is_register %}Already have an account? <a href="/login">Log in</a>{% else %}No account yet? <a href="/register">Sign up</a>{% endif %}</p>
 {% endblock %}

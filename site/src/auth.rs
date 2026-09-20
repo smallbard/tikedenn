@@ -120,22 +120,22 @@ pub async fn register(
         })
     };
     if username.len() < 3 || username.len() > 32 {
-        return fail("Le pseudo doit faire entre 3 et 32 caractères.");
+        return fail("Username must be 3 to 32 characters long.");
     }
     if !email.contains('@') {
-        return fail("Adresse e-mail invalide.");
+        return fail("Invalid e-mail address.");
     }
     if f.password.len() < 8 {
-        return fail("Le mot de passe doit faire au moins 8 caractères.");
+        return fail("Password must be at least 8 characters long.");
     }
     let salt = SaltString::generate(&mut OsRng);
     let hash = match Argon2::default().hash_password(f.password.as_bytes(), &salt) {
         Ok(h) => h.to_string(),
-        Err(_) => return fail("Erreur interne."),
+        Err(_) => return fail("Internal error."),
     };
     let conn = match state.db.get() {
         Ok(c) => c,
-        Err(_) => return fail("Erreur interne."),
+        Err(_) => return fail("Internal error."),
     };
     match conn.execute(
         "INSERT INTO users (username, email, pass_hash) VALUES (?1, ?2, ?3)",
@@ -147,7 +147,7 @@ pub async fn register(
             let target = auth_redirect(&f.next);
             (jar, target).into_response()
         }
-        Err(_) => fail("Ce pseudo ou cet e-mail est déjà utilisé."),
+        Err(_) => fail("This username or e-mail is already taken."),
     }
 }
 
@@ -169,7 +169,7 @@ pub async fn login(
             user: None,
             is_register: false,
             next: f.next.clone(),
-            error: Some("Identifiants incorrects.".to_string()),
+            error: Some("Invalid credentials.".to_string()),
         })
     };
     let conn = match state.db.get() {

@@ -14,9 +14,11 @@ architecturellement sur `../Lotr/site`.
   (états `draft → todo → progress → done`), avec des **projets**
   (associés aux tâches, champ repo git optionnel), des descriptions
   longues et des **pièces jointes** (stockées en BLOB dans SQLite, 10 Mo
-  max). Le tableau est filtrable par projet.
+  max). Le tableau est filtrable par projet ; une tâche se crée depuis une
+  page dédiée accessible par le bouton « New task ».
 - **htmx** : le tableau de bord est mis à jour par fragments HTML rendus
-  côté serveur, sans rechargement de page.
+  côté serveur (déplacement, édition d'une carte, suppression), sans
+  rechargement de page.
 - Déploiement sur le VPS (même machine que LotR) : voir `site/publish.sh`
   et `site/deploy/` (service systemd + vhost nginx).
 

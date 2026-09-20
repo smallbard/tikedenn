@@ -47,6 +47,7 @@
   <details class="edit">
     <summary>Edit</summary>
     <form method="post" action="/tasks/{{ task.id }}" hx-post="/tasks/{{ task.id }}" hx-target="closest .card" hx-swap="outerHTML">
+      <input type="hidden" name="filter" value="{{ filter }}">
       <input name="title" value="{{ task.title }}" required maxlength="200" class="grow">
       <select name="project">
         <option value="0">No project</option>

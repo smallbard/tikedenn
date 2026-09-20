@@ -414,23 +414,43 @@ pub async fn update_task(
             |r| r.get(0),
         ) {
             Ok(p) => Some(p),
-            Err(_) => return render_task_card(&state, &jar, id), // garde le projet d'origine
+            Err(_) => {
+                return (
+                    axum::http::StatusCode::UNPROCESSABLE_ENTITY,
+                    "Unknown project.",
+                )
+                    .into_response()
+            }
         }
     } else {
         None
     };
     let conn = state.db.get().expect("pool db");
-    let _ = conn.execute(
-        "UPDATE tasks SET title = ?1, description = ?2, project_id = ?3,
-         updated_at = datetime('now')
-         WHERE id = ?4 AND user_id = ?5",
-        rusqlite::params![title, f.description.trim(), project_id, id, user.id],
-    );
-    render_task_card(&state, &jar, id)
+    if conn
+        .execute(
+            "UPDATE tasks SET title = ?1, description = ?2, project_id = ?3,
+             updated_at = datetime('now')
+             WHERE id = ?4 AND user_id = ?5",
+            rusqlite::params![title, f.description.trim(), project_id, id, user.id],
+        )
+        .is_err()
+    {
+        return (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            "Could not update the task.",
+        )
+            .into_response();
+    }
+    render_task_card(&state, &jar, id, f.filter)
 }
 
 /// Rendu d'une carte individuelle (réponse htmx après édition).
-fn render_task_card(state: &AppState, jar: &SignedCookieJar, id: i64) -> Response {
+fn render_task_card(
+    state: &AppState,
+    jar: &SignedCookieJar,
+    id: i64,
+    filter: i64,
+) -> Response {
     let user = user(state, jar);
     let conn = state.db.get().expect("pool db");
     let projects = fetch_projects(&conn, user.id);
@@ -444,7 +464,7 @@ fn render_task_card(state: &AppState, jar: &SignedCookieJar, id: i64) -> Respons
             task: t,
             projects,
             statuses: status_choices(),
-            filter: 0,
+            filter,
         };
         match card.render() {
             Ok(html) => resp = html.into_response(),

@@ -144,6 +144,8 @@ button:hover { filter: brightness(1.1); }
 .col-draft > header { border-top: 3px solid #8f97a8; }
 .col-todo > header { border-top: 3px solid #4da3ff; }
 .col-progress > header { border-top: 3px solid #d8a63a; }
+.col-review > header { border-top: 3px solid #9b7ed8; }
+.col-deploy > header { border-top: 3px solid #e0715e; }
 .col-done > header { border-top: 3px solid #5fb86f; }
 
 .card.task {

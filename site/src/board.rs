@@ -1,5 +1,5 @@
 //! Tableau kanban : projets (nom + dépôt git), tâches dans les états
-//! draft / todo / progress / done, description longue et fichiers joints.
+//! draft / todo / progress / review / deploy / done, description longue et fichiers joints.
 
 use crate::auth::{self, CurrentUser};
 use crate::AppState;
@@ -18,10 +18,12 @@ use std::collections::HashMap;
 const MAX_FILE_SIZE: usize = 10 * 1024 * 1024;
 
 /// États du tableau, dans l'ordre du gauche vers la droite.
-const STATUSES: [(&str, &str); 4] = [
+const STATUSES: [(&str, &str); 6] = [
     ("draft", "Draft"),
     ("todo", "To do"),
     ("progress", "In progress"),
+    ("review", "To review"),
+    ("deploy", "To deploy"),
     ("done", "Done"),
 ];
 

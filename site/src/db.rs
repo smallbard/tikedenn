@@ -25,13 +25,13 @@ pub fn init_app_schema(conn: &Connection) -> anyhow::Result<()> {
             UNIQUE (user_id, name)
         );
 
-        -- Tâches du tableau kanban : draft → todo → progress → done.
+        -- Tâches du tableau kanban : draft → todo → progress → review → deploy → done.
         CREATE TABLE IF NOT EXISTS tasks (
             id          INTEGER PRIMARY KEY,
             user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
             project_id  INTEGER REFERENCES projects(id) ON DELETE SET NULL,
             status      TEXT NOT NULL DEFAULT 'draft'
-                        CHECK (status IN ('draft','todo','progress','done')),
+                        CHECK (status IN ('draft','todo','progress','review','deploy','done')),
             title       TEXT NOT NULL,
             description TEXT NOT NULL DEFAULT '',
             created_at  TEXT NOT NULL DEFAULT (datetime('now')),
@@ -63,6 +63,43 @@ pub fn init_app_schema(conn: &Connection) -> anyhow::Result<()> {
         .unwrap_or(true);
     if !has_col {
         let _ = conn.execute("ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0", []);
+    }
+
+    // Migration : schémas antérieurs ont une CHECK restreinte à
+    // draft/todo/progress/done (pas de 'review' ni 'deploy'). Le CREATE TABLE
+    // IF NOT EXISTS ne peut pas la mettre à jour : on reconstruit la table
+    // (copie des données) si la contrainte est ancienne.
+    let tasks_sql = conn
+        .query_row(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'tasks'",
+            [],
+            |r| r.get::<_, String>(0),
+        )
+        .unwrap_or_default();
+    if !tasks_sql.contains("'review'") && !tasks_sql.is_empty() {
+        conn.execute_batch(
+            r#"
+            PRAGMA foreign_keys = OFF;
+            BEGIN;
+            CREATE TABLE tasks_new (
+                id          INTEGER PRIMARY KEY,
+                user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                project_id  INTEGER REFERENCES projects(id) ON DELETE SET NULL,
+                status      TEXT NOT NULL DEFAULT 'draft'
+                            CHECK (status IN ('draft','todo','progress','review','deploy','done')),
+                title       TEXT NOT NULL,
+                description TEXT NOT NULL DEFAULT '',
+                created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+            INSERT INTO tasks_new SELECT * FROM tasks;
+            DROP TABLE tasks;
+            ALTER TABLE tasks_new RENAME TO tasks;
+            CREATE INDEX idx_tasks_user_status ON tasks(user_id, status);
+            COMMIT;
+            PRAGMA foreign_keys = ON;
+            "#,
+        )?;
     }
     Ok(())
 }

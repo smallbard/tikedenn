@@ -720,7 +720,10 @@ pub async fn delete_project(
 ) -> Response {
     let user = user(&state, &jar);
     if let Ok(conn) = state.db.get() {
-        let _ = conn.execute("UPDATE tasks SET project_id = NULL WHERE project_id = ?1", [id]);
+        let _ = conn.execute(
+            "UPDATE tasks SET project_id = NULL WHERE project_id = ?1 AND user_id = ?2",
+            rusqlite::params![id, user.id],
+        );
         let _ = conn.execute(
             "DELETE FROM projects WHERE id = ?1 AND user_id = ?2",
             rusqlite::params![id, user.id],

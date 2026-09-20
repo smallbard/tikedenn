@@ -2,24 +2,23 @@
 
 use askama::Template;
 use axum::{
-    extract::{Path, Query, State},
+    extract::{Extension, Path, Query, State},
     response::{IntoResponse, Redirect, Response},
     Form,
 };
-use axum_extra::extract::SignedCookieJar;
 use serde::Deserialize;
 use std::collections::HashMap;
 
-use crate::auth::{current_user, hash_password, render, CurrentUser};
+use crate::auth::{hash_password, render, CurrentUser};
 use crate::AppState;
 
 /// Utilisateur courant s'il est administrateur, sinon 404 (la page n'existe
-/// pas pour les autres) ou redirection vers la connexion.
-fn require_admin(state: &AppState, jar: &SignedCookieJar) -> Result<CurrentUser, Response> {
-    match current_user(state, jar) {
-        None => Err(Redirect::to("/login").into_response()),
-        Some(u) if u.is_admin => Ok(u),
-        Some(_) => Err(axum::http::StatusCode::NOT_FOUND.into_response()),
+/// pas pour les autres). L'authentification a déjà été faite par require_auth.
+fn require_admin(user: &CurrentUser) -> Result<&CurrentUser, Response> {
+    if user.is_admin {
+        Ok(user)
+    } else {
+        Err(axum::http::StatusCode::NOT_FOUND.into_response())
     }
 }
 
@@ -44,10 +43,10 @@ pub struct AdminUsersTemplate {
 /// Liste des utilisateurs (avec leur nombre de notes).
 pub async fn users(
     State(state): State<AppState>,
-    jar: SignedCookieJar,
+    Extension(user): Extension<CurrentUser>,
     Query(params): Query<HashMap<String, String>>,
 ) -> Response {
-    let admin = match require_admin(&state, &jar) {
+    let admin = match require_admin(&user) {
         Ok(u) => u,
         Err(r) => return r,
     };
@@ -79,7 +78,7 @@ pub async fn users(
     }
     let error = params.get("error").cloned();
     render(&AdminUsersTemplate {
-        user: Some(admin),
+        user: Some(admin.clone()),
         users,
         error,
     })
@@ -89,10 +88,10 @@ pub async fn users(
 /// pas se supprimer.
 pub async fn delete_user(
     State(state): State<AppState>,
-    jar: SignedCookieJar,
+    Extension(user): Extension<CurrentUser>,
     Path(id): Path<i64>,
 ) -> Response {
-    let admin = match require_admin(&state, &jar) {
+    let admin = match require_admin(&user) {
         Ok(u) => u,
         Err(r) => return r,
     };
@@ -113,11 +112,11 @@ pub struct PasswordForm {
 /// compte, y compris le sien).
 pub async fn set_password(
     State(state): State<AppState>,
-    jar: SignedCookieJar,
+    Extension(user): Extension<CurrentUser>,
     Path(id): Path<i64>,
     Form(f): Form<PasswordForm>,
 ) -> Response {
-    let _admin = match require_admin(&state, &jar) {
+    let _admin = match require_admin(&user) {
         Ok(u) => u,
         Err(r) => return r,
     };

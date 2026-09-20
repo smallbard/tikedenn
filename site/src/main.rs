@@ -58,7 +58,9 @@ async fn require_auth(
     req: Request,
     next: Next,
 ) -> Response {
-    if auth::current_user(&state, &jar).is_some() {
+    if let Some(u) = auth::current_user(&state, &jar) {
+        let mut req = req;
+        req.extensions_mut().insert(u);
         return next.run(req).await;
     }
     let uri = req.uri().path().to_string();

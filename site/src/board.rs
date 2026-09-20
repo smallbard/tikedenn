@@ -6,13 +6,13 @@ use crate::AppState;
 use askama::Template;
 use axum::{
     body::Body,
-    extract::{multipart::Multipart, Path, Query, State},
+    extract::{multipart::Multipart, Extension, Path, Query, State},
     http::header,
     response::{IntoResponse, Redirect, Response},
     Form,
 };
-use axum_extra::extract::cookie::SignedCookieJar;
 use serde::Deserialize;
+use std::collections::HashMap;
 
 /// Taille maximale d'une pièce jointe (10 Mo).
 const MAX_FILE_SIZE: usize = 10 * 1024 * 1024;
@@ -42,11 +42,8 @@ pub struct StatusChoice {
 }
 
 /// Extrait l'utilisateur connecté (la garde require_auth garantit sa présence).
-fn user(state: &AppState, jar: &SignedCookieJar) -> CurrentUser {
-    auth::current_user(state, jar)
-        .unwrap_or_else(|| panic!("require_auth a laissé passer une requête non authentifiée"))
-}
-
+// L'utilisateur authentifié est injecté par require_auth (extension de requête) :
+// une seule requête BDD par requête HTTP, pas deux.
 #[derive(Clone)]
 pub struct ProjectRow {
     pub id: i64,
@@ -130,13 +127,66 @@ fn fetch_files(conn: &rusqlite::Connection, task_id: i64) -> Vec<FileRow> {
     out
 }
 
+/// Première ligne non vide de la description, tronquée à 140 caractères.
+fn first_line_preview(description: &str) -> String {
+    let first = description.lines().map(|l| l.trim()).find(|l| !l.is_empty());
+    match first {
+        Some(l) if l.chars().count() > 140 => {
+            let e = l.char_indices().nth(140).map(|(i, _)| i).unwrap_or(l.len());
+            format!("{}…", &l[..e])
+        }
+        Some(l) => l.to_string(),
+        None => String::new(),
+    }
+}
+
+/// Fichiers de plusieurs tâches en une seule requête (pas de N+1).
+fn fetch_files_for_tasks(conn: &rusqlite::Connection, task_ids: &[i64]) -> HashMap<i64, Vec<FileRow>> {
+    let mut out = HashMap::new();
+    if task_ids.is_empty() {
+        return out;
+    }
+    let placeholders = (0..task_ids.len())
+        .map(|i| format!("?{}", i + 1))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let sql = format!(
+        "SELECT task_id, id, name, size FROM files WHERE task_id IN ({placeholders}) ORDER BY id"
+    );
+    let mut st = match conn.prepare(&sql) {
+        Ok(s) => s,
+        Err(_) => return out,
+    };
+    let params: Vec<&(dyn rusqlite::ToSql + 'static)> =
+        task_ids.iter().map(|t| t as &(dyn rusqlite::ToSql + 'static)).collect();
+    let rows = match st.query_map(rusqlite::params_from_iter(params), |r| {
+        Ok((
+            r.get::<_, i64>(0)?,
+            FileRow {
+                id: r.get(1)?,
+                name: r.get(2)?,
+                size: r.get(3)?,
+            },
+        ))
+    }) {
+        Ok(rows) => rows,
+        Err(_) => return out,
+    };
+    for r in rows.filter_map(|r| r.ok()) {
+        out.entry(r.0).or_default().push(r.1);
+    }
+    out
+}
+
 fn fetch_tasks(conn: &rusqlite::Connection, user_id: i64, project_id: Option<i64>) -> Vec<TaskRow> {
     let mut out = vec![];
     // ?2 IS NULL → pas de filtre projet (tous les projets).
+    // Le plus récent d'abord dans chaque colonne.
     let sql = "SELECT t.id, t.project_id, p.id, p.name, p.git_repo, t.status, t.title,
                       t.description, t.created_at
                FROM tasks t LEFT JOIN projects p ON p.id = t.project_id
-               WHERE t.user_id = ?1 AND (?2 IS NULL OR t.project_id = ?2)";
+               WHERE t.user_id = ?1 AND (?2 IS NULL OR t.project_id = ?2)
+               ORDER BY t.id DESC";
     let mut st = match conn.prepare(sql) {
         Ok(s) => s,
         Err(_) => return out,
@@ -144,6 +194,7 @@ fn fetch_tasks(conn: &rusqlite::Connection, user_id: i64, project_id: Option<i64
     let rows = match st.query_map(rusqlite::params![user_id, project_id], |r| {
         // Colonnes : 0=t.id, 1=t.project_id, 2=p.id, 3=p.name, 4=p.git_repo,
         //           5=t.status, 6=t.title, 7=t.description, 8=t.created_at
+        let desc: String = r.get(7)?;
         Ok(TaskRow {
             id: r.get(0)?,
             project_id: r.get::<_, Option<i64>>(1)?,
@@ -158,8 +209,8 @@ fn fetch_tasks(conn: &rusqlite::Connection, user_id: i64, project_id: Option<i64
             },
             status: r.get(5)?,
             title: r.get(6)?,
-            description: r.get(7)?,
-            description_preview: String::new(),
+            description_preview: first_line_preview(&desc),
+            description: desc,
             created_at: r.get(8)?,
             files: vec![],
         })
@@ -167,39 +218,62 @@ fn fetch_tasks(conn: &rusqlite::Connection, user_id: i64, project_id: Option<i64
         Ok(r) => r,
         Err(_) => return out,
     };
-    for row in rows {
-        let mut row = match row {
-            Ok(r) => r,
-            Err(_) => continue,
-        };
-        // Aperçu : première ligne non vide de la description, tronquée.
-        let first = row
-            .description
-            .lines()
-            .map(|l| l.trim())
-            .find(|l| !l.is_empty());
-        if let Some(l) = first {
-            row.description_preview = if l.chars().count() > 140 {
-                let e = l.char_indices().nth(140).map(|(i, _)| i).unwrap_or(l.len());
-                format!("{}…", &l[..e])
-            } else {
-                l.to_string()
-            };
-        }
-        row.files = fetch_files(conn, row.id);
+    for row in rows.filter_map(|r| r.ok()) {
         out.push(row);
     }
+    // Fichiers : une seule requête pour toutes les tâches.
+    let ids: Vec<i64> = out.iter().map(|t| t.id).collect();
+    let mut files = fetch_files_for_tasks(conn, &ids);
+    for t in &mut out {
+        t.files = files.remove(&t.id).unwrap_or_default();
+    }
     out
+}
+
+/// Une seule tâche (pour le re-rendu d'une carte htmx) + ses fichiers.
+fn fetch_one_task(conn: &rusqlite::Connection, user_id: i64, id: i64) -> Option<TaskRow> {
+    let mut t: TaskRow = conn
+        .query_row(
+            "SELECT t.id, t.project_id, p.id, p.name, p.git_repo, t.status, t.title,
+                    t.description, t.created_at
+             FROM tasks t LEFT JOIN projects p ON p.id = t.project_id
+             WHERE t.user_id = ?1 AND t.id = ?2",
+            rusqlite::params![user_id, id],
+            |r| {
+                let desc: String = r.get(7)?;
+                Ok(TaskRow {
+                    id: r.get(0)?,
+                    project_id: r.get::<_, Option<i64>>(1)?,
+                    project: if r.get::<_, Option<i64>>(2)?.is_some() {
+                        Some(ProjectRow {
+                            id: r.get(2)?,
+                            name: r.get(3)?,
+                            git_repo: r.get(4)?,
+                        })
+                    } else {
+                        None
+                    },
+                    status: r.get(5)?,
+                    title: r.get(6)?,
+                    description_preview: first_line_preview(&desc),
+                    description: desc,
+                    created_at: r.get(8)?,
+                    files: vec![],
+                })
+            },
+        )
+        .ok()?;
+    t.files = fetch_files(conn, t.id);
+    Some(t)
 }
 
 /// Construit les 4 colonnes du tableau (utilisé par la page et les
 /// réponses htmx). `selected` : id du projet de filtre, 0 = tous.
 fn build_board(
     state: &AppState,
-    jar: &SignedCookieJar,
+    user: &CurrentUser,
     selected: i64,
 ) -> (Vec<ProjectRow>, Vec<Column>) {
-    let user = user(state, jar);
     let conn = state.db.get().expect("pool db");
     let projects = fetch_projects(&conn, user.id);
     let filter = if selected > 0 && projects.iter().any(|p| p.id == selected) {
@@ -233,11 +307,11 @@ fn build_board(
 }
 
 /// Rendu du fragment de tableau (réponse htmx des déplacements/créations).
-fn render_board_fragment(state: &AppState, jar: &SignedCookieJar, selected: i64) -> Response {
-    let (projects, columns) = build_board(state, jar, selected);
+fn render_board_fragment(state: &AppState, user: &CurrentUser, selected: i64) -> Response {
+    let (projects, columns) = build_board(state, user, selected);
     auth::render(&BoardFragment {
         columns,
-        user: Some(user(state, jar)),
+        user: Some(user.clone()),
         _projects: projects,
     })
 }
@@ -274,13 +348,13 @@ pub struct TaskCardTemplate {
 /// Tableau de bord : le kanban, filtrable par projet.
 pub async fn dashboard(
     State(state): State<AppState>,
-    jar: SignedCookieJar,
+    Extension(user): Extension<CurrentUser>,
     Query(q): Query<BoardQuery>,
 ) -> Response {
     let selected = q.project.unwrap_or(0);
-    let (projects, columns) = build_board(&state, &jar, selected);
+    let (projects, columns) = build_board(&state, &user, selected);
     auth::render(&DashboardTemplate {
-        user: Some(user(&state, &jar)),
+        user: Some(user),
         projects,
         selected_project: selected,
         columns,
@@ -308,10 +382,9 @@ pub struct TaskForm {
 /// Création d'une tâche : toujours en draft. Renvoie le fragment de tableau.
 pub async fn create_task(
     State(state): State<AppState>,
-    jar: SignedCookieJar,
+    Extension(user): Extension<CurrentUser>,
     Form(f): Form<TaskForm>,
 ) -> Response {
-    let user = user(&state, &jar);
     let title = f.title.trim().to_string();
     if title.is_empty() {
         return (
@@ -354,17 +427,16 @@ pub async fn create_task(
         )
             .into_response();
     }
-    render_board_fragment(&state, &jar, f.filter)
+    render_board_fragment(&state, &user, f.filter)
 }
 
 /// Déplace une tâche vers un autre état. Renvoie le fragment de tableau.
 pub async fn move_task(
     State(state): State<AppState>,
-    jar: SignedCookieJar,
+    Extension(user): Extension<CurrentUser>,
     Path(id): Path<i64>,
     Form(f): Form<MoveForm>,
 ) -> Response {
-    let user = user(&state, &jar);
     if !STATUSES.iter().any(|(v, _)| *v == f.status) {
         return (
             axum::http::StatusCode::UNPROCESSABLE_ENTITY,
@@ -377,7 +449,7 @@ pub async fn move_task(
         "UPDATE tasks SET status = ?1, updated_at = datetime('now') WHERE id = ?2 AND user_id = ?3",
         rusqlite::params![f.status, id, user.id],
     );
-    render_board_fragment(&state, &jar, f.filter)
+    render_board_fragment(&state, &user, f.filter)
 }
 
 #[derive(Deserialize)]
@@ -390,11 +462,10 @@ pub struct MoveForm {
 /// Met à jour une tâche (titre, description, projet). Renvoie la carte.
 pub async fn update_task(
     State(state): State<AppState>,
-    jar: SignedCookieJar,
+    Extension(user): Extension<CurrentUser>,
     Path(id): Path<i64>,
     Form(f): Form<TaskForm>,
 ) -> Response {
-    let user = user(&state, &jar);
     let title = f.title.trim().to_string();
     if title.is_empty() {
         return (
@@ -438,17 +509,17 @@ pub async fn update_task(
         )
             .into_response();
     }
-    render_task_card(&state, &jar, id, f.filter)
+    render_task_card(&state, &user, id, f.filter)
 }
 
 /// Rendu d'une carte individuelle (réponse htmx après édition).
+/// Une seule tâche est chargée (1 requête tâche + 1 requête fichiers).
 fn render_task_card(
     state: &AppState,
-    jar: &SignedCookieJar,
+    user: &CurrentUser,
     id: i64,
     filter: i64,
 ) -> Response {
-    let user = user(state, jar);
     let conn = state.db.get().expect("pool db");
     let projects = fetch_projects(&conn, user.id);
     let mut resp = (
@@ -456,7 +527,7 @@ fn render_task_card(
         "Task not found.",
     )
         .into_response();
-    if let Some(t) = fetch_tasks(&conn, user.id, None).into_iter().find(|t| t.id == id) {
+    if let Some(t) = fetch_one_task(&conn, user.id, id) {
         let card = TaskCardTemplate {
             task: t,
             projects,
@@ -477,20 +548,28 @@ fn render_task_card(
     resp
 }
 
-/// Supprime une tâche (fichiers en cascade). Renvoie du vide (hx-swap=outerHTML).
+/// Supprime une tâche (fichiers en cascade). Re-rend le tableau entier pour
+/// mettre à jour les compteurs de colonnes et l'état vide.
 pub async fn delete_task(
     State(state): State<AppState>,
-    jar: SignedCookieJar,
+    Extension(user): Extension<CurrentUser>,
     Path(id): Path<i64>,
+    Form(f): Form<DeleteTaskForm>,
 ) -> Response {
-    let user = user(&state, &jar);
     if let Ok(conn) = state.db.get() {
         let _ = conn.execute(
             "DELETE FROM tasks WHERE id = ?1 AND user_id = ?2",
             rusqlite::params![id, user.id],
         );
     }
-    "".into_response()
+    render_board_fragment(&state, &user, f.filter)
+}
+
+#[derive(Deserialize)]
+pub struct DeleteTaskForm {
+    /// Filtre projet actif (préserve la vue après suppression).
+    #[serde(default)]
+    filter: i64,
 }
 
 /// Téléverse un fichier joint sur une tâche (multipart).
@@ -498,11 +577,10 @@ pub async fn delete_task(
 /// et l'INSERT — jamais pendant la lecture du corps (uploads lents).
 pub async fn upload_file(
     State(state): State<AppState>,
-    jar: SignedCookieJar,
+    Extension(user): Extension<CurrentUser>,
     Path(task_id): Path<i64>,
     mut multipart: Multipart,
 ) -> Response {
-    let user = user(&state, &jar);
     // La tâche doit exister et appartenir à l'utilisateur (connexion brève).
     let task_ok = {
         let conn = state.db.get().expect("pool db");
@@ -604,10 +682,9 @@ pub async fn upload_file(
 /// Téléchargement d'un fichier joint.
 pub async fn download_file(
     State(state): State<AppState>,
-    jar: SignedCookieJar,
+    Extension(user): Extension<CurrentUser>,
     Path(id): Path<i64>,
 ) -> Response {
-    let user = user(&state, &jar);
     let conn = state.db.get().expect("pool db");
     let row: Result<(String, String, i64, Vec<u8>, i64), _> = conn.query_row(
         "SELECT f.name, f.mime, f.size, f.data, t.user_id
@@ -650,10 +727,9 @@ pub async fn download_file(
 /// Supprime un fichier joint. Renvoie du vide (hx-swap=outerHTML).
 pub async fn delete_file(
     State(state): State<AppState>,
-    jar: SignedCookieJar,
+    Extension(user): Extension<CurrentUser>,
     Path(id): Path<i64>,
 ) -> Response {
-    let user = user(&state, &jar);
     if let Ok(conn) = state.db.get() {
         let _ = conn.execute(
             "DELETE FROM files WHERE id = ?1 AND task_id IN (SELECT id FROM tasks WHERE user_id = ?2)",
@@ -701,10 +777,9 @@ impl ProjectItemRow {
 /// Page de gestion des projets (nom + dépôt git).
 pub async fn projects_page(
     State(state): State<AppState>,
-    jar: SignedCookieJar,
+    Extension(user): Extension<CurrentUser>,
     Query(q): Query<ProjectsQuery>,
 ) -> Response {
-    let user = user(&state, &jar);
     let conn = state.db.get().expect("pool db");
     let mut projects = vec![];
     if let Ok(mut st) = conn.prepare(
@@ -746,10 +821,9 @@ pub struct ProjectForm {
 /// Crée un projet.
 pub async fn create_project(
     State(state): State<AppState>,
-    jar: SignedCookieJar,
+    Extension(user): Extension<CurrentUser>,
     Form(f): Form<ProjectForm>,
 ) -> Response {
-    let user = user(&state, &jar);
     let name = f.name.trim().to_string();
     let repo = f.git_repo.trim().to_string();
     if name.is_empty() || name.len() > 64 {
@@ -769,11 +843,10 @@ pub async fn create_project(
 /// Met à jour un projet (nom, dépôt git).
 pub async fn update_project(
     State(state): State<AppState>,
-    jar: SignedCookieJar,
+    Extension(user): Extension<CurrentUser>,
     Path(id): Path<i64>,
     Form(f): Form<ProjectForm>,
 ) -> Response {
-    let user = user(&state, &jar);
     let name = f.name.trim().to_string();
     let repo = f.git_repo.trim().to_string();
     if !name.is_empty() && name.len() <= 64 {
@@ -791,10 +864,9 @@ pub async fn update_project(
 /// Supprime un projet (ses tâches sont conservées, sans projet).
 pub async fn delete_project(
     State(state): State<AppState>,
-    jar: SignedCookieJar,
+    Extension(user): Extension<CurrentUser>,
     Path(id): Path<i64>,
 ) -> Response {
-    let user = user(&state, &jar);
     if let Ok(conn) = state.db.get() {
         let _ = conn.execute(
             "UPDATE tasks SET project_id = NULL WHERE project_id = ?1 AND user_id = ?2",

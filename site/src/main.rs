@@ -140,7 +140,7 @@ fn seed_default_admin(conn: &rusqlite::Connection) {
     };
     if conn
         .execute(
-            "INSERT INTO users (username, email, pass_hash, is_admin) VALUES ('admin', 'admin@tikedenn.local', ?1, 1)",
+            "INSERT INTO users (username, email, pass_hash, is_admin) VALUES ('admin', 'olivier.leguyader@smallbard.com', ?1, 1)",
             [&hash],
         )
         .is_ok()

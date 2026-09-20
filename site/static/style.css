@@ -289,11 +289,11 @@ form.rowform button { padding: 0.3rem 0.6rem; }
 .btn:hover { text-decoration: none; filter: brightness(1.08); }
 .btn-ghost { background: transparent; color: var(--accent); }
 .landing-preview { margin-top: 2.5rem; }
-.landing-preview > h2, .landing-feats > h2 { margin: 0.5rem 0 0.3rem; }
-.landing-preview .muted { color: var(--muted); margin: 0 0 1rem; }
-.landing-preview .board { pointer-events: none; user-select: none; opacity: 0.95; }
+.landing-preview > h2, .landing-feats > h2 { margin: 0.5rem 0 0.3rem; text-align: center; }
+.landing-preview .muted { color: var(--muted); margin: 0 0 1rem; text-align: center; }
+.landing-preview .board { pointer-events: none; user-select: none; opacity: 0.95; margin: 0 auto; max-width: 1000px; }
 .landing-preview .board .card { cursor: default; }
 .landing-feats { margin-top: 2.5rem; }
-.feat-list { max-width: 720px; padding-left: 1.2rem; }
+.feat-list { max-width: 720px; padding-left: 1.2rem; margin: 0 auto; }
 .feat-list li { margin-bottom: 0.5rem; }
 .landing-hero code, .landing-feats code { background: var(--panel); border: 1px solid var(--border); border-radius: 4px; padding: 0.05rem 0.3rem; }

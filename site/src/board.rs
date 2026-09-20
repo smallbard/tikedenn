@@ -179,11 +179,8 @@ fn fetch_tasks(conn: &rusqlite::Connection, user_id: i64, project_id: Option<i64
             .map(|l| l.trim())
             .find(|l| !l.is_empty());
         if let Some(l) = first {
-            row.description_preview = if l.len() > 140 {
-                let mut e = l.char_indices().take(140).last().map(|(i, _)| i).unwrap_or(0);
-                while !l.is_char_boundary(e) {
-                    e -= 1;
-                }
+            row.description_preview = if l.chars().count() > 140 {
+                let e = l.char_indices().nth(140).map(|(i, _)| i).unwrap_or(l.len());
                 format!("{}…", &l[..e])
             } else {
                 l.to_string()

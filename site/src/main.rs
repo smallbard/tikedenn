@@ -105,6 +105,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/projects/{id}", post(board::update_project))
         .route("/projects/{id}/delete", post(board::delete_project))
         .route("/tasks", post(board::create_task))
+        .route("/tasks/new", get(board::new_task_page))
         .route("/tasks/{id}", post(board::update_task))
         .route("/tasks/{id}/move", post(board::move_task))
         .route("/tasks/{id}/delete", post(board::delete_task))

@@ -13,18 +13,7 @@
   </form>
 </div>
 
-<form method="post" action="/tasks" hx-post="/tasks" hx-target="#board" hx-swap="outerHTML" class="new-task">
-  <input type="hidden" name="filter" value="{{ selected_project }}">
-  <input name="title" placeholder="New task title…" required maxlength="200" class="grow">
-  <select name="project">
-    <option value="0">No project</option>
-    {% for p in projects %}
-    <option value="{{ p.id }}" {% if p.id == selected_project %}selected{% endif %}>{{ p.name }}</option>
-    {% endfor %}
-  </select>
-  <textarea name="description" rows="2" placeholder="Description / full specification (optional)"></textarea>
-  <button type="submit">Create in Draft</button>
-</form>
+<a class="page-btn" href="/tasks/new?project={{ selected_project }}">New task</a>
 
 {% include "board_frag.html" %}
 {% endblock %}

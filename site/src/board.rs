@@ -329,6 +329,33 @@ pub struct TaskCardTemplate<'a> {
     pub filter: i64,
 }
 
+#[derive(Template)]
+#[template(path = "task_new.html")]
+pub struct TaskNewTemplate {
+    pub user: Option<CurrentUser>,
+    pub projects: Vec<ProjectRow>,
+    /// Projet présélectionné (et filtre à préserver au retour).
+    pub selected_project: i64,
+    pub error: Option<String>,
+}
+
+/// Page de création d'une tâche (formulaire sur sa propre page).
+pub async fn new_task_page(
+    State(state): State<AppState>,
+    Extension(user): Extension<CurrentUser>,
+    Query(q): Query<BoardQuery>,
+) -> Response {
+    let selected = q.project.unwrap_or(0);
+    let conn = state.db.get().expect("pool db");
+    let projects = fetch_projects(&conn, user.id);
+    auth::render(&TaskNewTemplate {
+        user: Some(user),
+        projects,
+        selected_project: selected,
+        error: q.error,
+    })
+}
+
 /// Tableau de bord : le kanban, filtrable par projet.
 pub async fn dashboard(
     State(state): State<AppState>,
@@ -348,6 +375,8 @@ pub async fn dashboard(
 #[derive(Deserialize)]
 pub struct BoardQuery {
     project: Option<i64>,
+    /// Message d'erreur à réafficher (page de création d'une tâche).
+    error: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -363,7 +392,30 @@ pub struct TaskForm {
     filter: i64,
 }
 
-/// Création d'une tâche : toujours en draft. Renvoie le fragment de tableau.
+/// Encode une chaîne pour un paramètre de query.
+fn urlencode(s: &str) -> String {
+    let mut out = String::new();
+    for &b in s.as_bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(b as char)
+            }
+            _ => out.push_str(&format!("%{:02X}", b)),
+        }
+    }
+    out
+}
+
+/// Redirection vers la page de création avec un message d'erreur.
+fn redirect_new_task(filter: i64, error: &str) -> Response {
+    let mut url = format!("/tasks/new?project={}", filter);
+    if !error.is_empty() {
+        url.push_str(&format!("&error={}", urlencode(error)));
+    }
+    Redirect::to(&url).into_response()
+}
+
+/// Création d'une tâche : toujours en draft. Redirige vers le tableau.
 pub async fn create_task(
     State(state): State<AppState>,
     Extension(user): Extension<CurrentUser>,
@@ -371,11 +423,7 @@ pub async fn create_task(
 ) -> Response {
     let title = f.title.trim().to_string();
     if title.is_empty() {
-        return (
-            axum::http::StatusCode::UNPROCESSABLE_ENTITY,
-            "Task title is required.",
-        )
-            .into_response();
+        return redirect_new_task(f.filter, "Task title is required.");
     }
     let project_id: Option<i64> = if f.project > 0 {
         let conn = state.db.get().expect("pool db");
@@ -385,13 +433,7 @@ pub async fn create_task(
             |r| r.get(0),
         ) {
             Ok(id) => Some(id),
-            Err(_) => {
-                return (
-                    axum::http::StatusCode::UNPROCESSABLE_ENTITY,
-                    "Unknown project.",
-                )
-                    .into_response()
-            }
+            Err(_) => return redirect_new_task(f.filter, "Unknown project."),
         }
     } else {
         None
@@ -405,13 +447,10 @@ pub async fn create_task(
         )
         .is_err()
     {
-        return (
-            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-            "Could not create the task.",
-        )
-            .into_response();
+        return redirect_new_task(f.filter, "Could not create the task.");
     }
-    render_board_fragment(&state, &user, f.filter)
+    let url = format!("/dashboard?project={}", f.filter);
+    Redirect::to(&url).into_response()
 }
 
 /// Déplace une tâche vers un autre état. Renvoie le fragment de tableau.

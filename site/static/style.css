@@ -87,18 +87,27 @@ button:hover { filter: brightness(1.1); }
 
 // ---------------------------------------------------------------- kanban
 .new-task {
-  flex-direction: row;
-  flex-wrap: wrap;
-  align-items: center;
-  max-width: none;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.6rem;
+  max-width: 640px;
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 8px;
-  padding: 0.7rem 1rem;
+  padding: 1rem;
   margin-bottom: 1rem;
 }
-.new-task textarea { flex: 1 1 100%; }
-.new-task input.grow { flex: 1 1 240px; min-width: 200px; }
+.new-task input, .new-task select, .new-task textarea { width: 100%; }
+.page-btn {
+  display: inline-block;
+  margin: 0.25rem 0 1rem;
+  padding: 0.4rem 0.9rem;
+  border-radius: 8px;
+  background: var(--accent);
+  color: #0b0d10;
+  font-weight: 600;
+}
+.page-btn:hover { text-decoration: none; filter: brightness(1.1); }
 
 .board {
   display: grid;

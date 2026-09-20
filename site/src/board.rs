@@ -494,6 +494,8 @@ pub async fn delete_task(
 }
 
 /// Téléverse un fichier joint sur une tâche (multipart).
+/// La connexion du pool n'est retenue que pour la vérification de propriété
+/// et l'INSERT — jamais pendant la lecture du corps (uploads lents).
 pub async fn upload_file(
     State(state): State<AppState>,
     jar: SignedCookieJar,
@@ -501,19 +503,21 @@ pub async fn upload_file(
     mut multipart: Multipart,
 ) -> Response {
     let user = user(&state, &jar);
-    let conn = state.db.get().expect("pool db");
-    // La tâche doit exister et appartenir à l'utilisateur.
-    let task_ok = conn
-        .query_row(
+    // La tâche doit exister et appartenir à l'utilisateur (connexion brève).
+    let task_ok = {
+        let conn = state.db.get().expect("pool db");
+        conn.query_row(
             "SELECT id FROM tasks WHERE id = ?1 AND user_id = ?2",
             rusqlite::params![task_id, user.id],
             |r| r.get::<_, i64>(0),
         )
-        .is_ok();
+        .is_ok()
+    };
     if !task_ok {
         return Redirect::to("/dashboard").into_response();
     }
     let mut filter = 0i64;
+    let mut stored = false;
     loop {
         let field = match multipart.next_field().await {
             Ok(Some(f)) => f,
@@ -554,21 +558,41 @@ pub async fn upload_file(
             )
                 .into_response();
         }
-        if conn
-            .execute(
-                "INSERT INTO files (task_id, name, size, mime, data) VALUES (?1, ?2, ?3, ?4, ?5)",
-                rusqlite::params![task_id, file_name, size as i64, mime, data],
-            )
-            .is_err()
-        {
-            return (
-                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                "Could not store the file.",
-            )
-                .into_response();
+        // Connexion brève, seulement pour l'INSERT.
+        match state.db.get() {
+            Ok(conn) => {
+                if conn
+                    .execute(
+                        "INSERT INTO files (task_id, name, size, mime, data) VALUES (?1, ?2, ?3, ?4, ?5)",
+                        rusqlite::params![task_id, file_name, size as i64, mime, data],
+                    )
+                    .is_err()
+                {
+                    return (
+                        axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                        "Could not store the file.",
+                    )
+                        .into_response();
+                }
+            }
+            Err(_) => {
+                return (
+                    axum::http::StatusCode::SERVICE_UNAVAILABLE,
+                    "Database busy, try again.",
+                )
+                    .into_response()
+            }
         }
+        stored = true;
         // Un seul fichier par formulaire.
         break;
+    }
+    if !stored {
+        return (
+            axum::http::StatusCode::UNPROCESSABLE_ENTITY,
+            "No file uploaded.",
+        )
+            .into_response();
     }
     if filter > 0 {
         Redirect::to(&format!("/dashboard?project={filter}")).into_response()

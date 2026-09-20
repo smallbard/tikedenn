@@ -14,6 +14,7 @@
 </div>
 
 <form method="post" action="/tasks" hx-post="/tasks" hx-target="#board" hx-swap="outerHTML" class="new-task">
+  <input type="hidden" name="filter" value="{{ selected_project }}">
   <input name="title" placeholder="New task title…" required maxlength="200" class="grow">
   <select name="project">
     <option value="0">No project</option>

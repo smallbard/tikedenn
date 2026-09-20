@@ -300,8 +300,12 @@ pub struct TaskForm {
     title: String,
     #[serde(default)]
     description: String,
-    /// Id du projet (0 = aucun). Doublé : aussi utilisé comme filtre à préserver.
+    /// Id du projet (0 = aucun) pour la nouvelle tâche.
+    #[serde(default)]
     project: i64,
+    /// Filtre projet actif du tableau, à préserver après la création (0 = tous).
+    #[serde(default)]
+    filter: i64,
 }
 
 /// Création d'une tâche : toujours en draft. Renvoie le fragment de tableau.
@@ -353,7 +357,7 @@ pub async fn create_task(
         )
             .into_response();
     }
-    render_board_fragment(&state, &jar, f.project)
+    render_board_fragment(&state, &jar, f.filter)
 }
 
 /// Déplace une tâche vers un autre état. Renvoie le fragment de tableau.

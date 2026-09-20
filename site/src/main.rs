@@ -92,7 +92,7 @@ async fn main() -> anyhow::Result<()> {
 
     let public = Router::new()
         .route("/login", get(auth::login_form).post(auth::login))
-        .route("/register", get(auth::register_form).post(auth::register))
+        //.route("/register", get(auth::register_form).post(auth::register))
         .route("/logout", post(auth::logout))
         .nest_service("/static", ServeDir::new(static_dir));
 

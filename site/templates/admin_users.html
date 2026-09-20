@@ -19,7 +19,7 @@
     </td>
     <td>
       {% if !u.is_self %}
-      <form method="post" action="/admin/users/{{ u.id }}/delete" onsubmit="return confirm('Delete user {{ u.username }} and their notes?')">
+      <form method="post" action="/admin/users/{{ u.id }}/delete" onsubmit="return confirm('Delete this user? All of their data (projects, tasks, files) will be lost.')">
         <button class="linklike danger">Delete</button>
       </form>
       {% endif %}

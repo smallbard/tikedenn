@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}Admin — Users — Tikedenn{% endblock %}
+{% block content %}
+<h1>Users <small>({{ users.len() }})</small></h1>
+{% if let Some(e) = error %}<p class="error">{{ e }}</p>{% endif %}
+<table class="user-list">
+  <tr><th>Name</th><th>E-mail</th><th>Registered</th><th>Notes</th><th></th><th></th></tr>
+  {% for u in users %}
+  <tr>
+    <td>{{ u.username }}{% if u.is_admin %} <small>(admin)</small>{% endif %}{% if u.is_self %} <small>(you)</small>{% endif %}</td>
+    <td>{{ u.email }}</td>
+    <td>{{ u.created_at }}</td>
+    <td>{{ u.notes }}</td>
+    <td>
+      <form method="post" action="/admin/users/{{ u.id }}/password" class="rowform">
+        <input name="password" type="password" placeholder="New password" minlength="8" required>
+        <button title="Set a new password for this account">Set</button>
+      </form>
+    </td>
+    <td>
+      {% if !u.is_self %}
+      <form method="post" action="/admin/users/{{ u.id }}/delete" onsubmit="return confirm('Delete user {{ u.username }} and their notes?')">
+        <button class="linklike danger">Delete</button>
+      </form>
+      {% endif %}
+    </td>
+  </tr>
+  {% endfor %}
+</table>
+{% endblock %}

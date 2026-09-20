@@ -1,3 +1,4 @@
+mod admin;
 mod auth;
 mod db;
 mod notes;
@@ -82,6 +83,7 @@ async fn main() -> anyhow::Result<()> {
     {
         let conn = pool.get()?;
         db::init_app_schema(&conn)?;
+        seed_default_admin(&conn);
     }
 
     let state = AppState { db: pool, key };
@@ -98,6 +100,9 @@ async fn main() -> anyhow::Result<()> {
         .route("/dashboard", get(notes::dashboard))
         .route("/notes", post(notes::create).get(notes::list))
         .route("/notes/{id}/delete", post(notes::delete))
+        .route("/admin/users", get(admin::users))
+        .route("/admin/users/{id}/delete", post(admin::delete_user))
+        .route("/admin/users/{id}/password", post(admin::set_password))
         .route_layer(middleware::from_fn_with_state(
             state.clone(),
             require_auth,
@@ -114,6 +119,36 @@ async fn main() -> anyhow::Result<()> {
     let listener = tokio::net::TcpListener::bind(&addr).await?;
     axum::serve(listener, router).await?;
     Ok(())
+}
+
+/// Au tout premier lancement (aucun compte), crée un compte administrateur
+/// par défaut avec un mot de passe aléatoire affiché dans la console
+/// (journal systemd en production). À changer ensuite depuis /admin/users.
+fn seed_default_admin(conn: &rusqlite::Connection) {
+    let count: i64 = match conn.query_row("SELECT COUNT(*) FROM users", [], |r| r.get(0)) {
+        Ok(n) => n,
+        Err(_) => return,
+    };
+    if count != 0 {
+        return;
+    }
+    let mut bytes = [0u8; 8];
+    rand::thread_rng().fill_bytes(&mut bytes);
+    let password: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
+    let Some(hash) = auth::hash_password(&password) else {
+        return;
+    };
+    if conn
+        .execute(
+            "INSERT INTO users (username, email, pass_hash, is_admin) VALUES ('admin', 'admin@tikedenn.local', ?1, 1)",
+            [&hash],
+        )
+        .is_ok()
+    {
+        eprintln!(
+            "[tikedenn] Default admin account created — username: \"admin\", password: \"{password}\". Change it from /admin/users after logging in."
+        );
+    }
 }
 
 /// Racine : tableau de bord si connecté, formulaire de connexion sinon.

@@ -12,7 +12,8 @@
   <a class="brand" href="/">Tikedenn</a>
   <span class="spacer"></span>
   {% if let Some(u) = user %}
-    <span class="who">{{ u }}</span>
+    {% if u.is_admin %}<a href="/admin/users">Admin</a>{% endif %}
+    <span class="who">{{ u.username }}</span>
     <form method="post" action="/logout"><button class="linklike">Log out</button></form>
   {% else %}
     <a href="/login">Log in</a>

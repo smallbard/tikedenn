@@ -11,6 +11,7 @@ pub fn init_app_schema(conn: &Connection) -> anyhow::Result<()> {
             username   TEXT NOT NULL UNIQUE COLLATE NOCASE,
             email      TEXT NOT NULL UNIQUE COLLATE NOCASE,
             pass_hash  TEXT NOT NULL,
+            is_admin   INTEGER NOT NULL DEFAULT 0,
             created_at TEXT NOT NULL DEFAULT (datetime('now'))
         );
 
@@ -23,5 +24,17 @@ pub fn init_app_schema(conn: &Connection) -> anyhow::Result<()> {
         );
         "#,
     )?;
+
+    // Migration légère : ajouter is_admin aux schémas locaux antérieurs.
+    let has_col = conn
+        .prepare("PRAGMA table_info(users)")
+        .and_then(|mut st| {
+            st.query_map([], |r| r.get::<_, String>(1))
+                .map(|it| it.flatten().any(|n| n == "is_admin"))
+        })
+        .unwrap_or(true);
+    if !has_col {
+        let _ = conn.execute("ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0", []);
+    }
     Ok(())
 }

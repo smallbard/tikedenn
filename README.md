@@ -6,6 +6,10 @@ architecturellement sur `../Lotr/site`.
 - **Accès réservé aux utilisateurs inscrits** : tout est protégé par une
   authentification (inscription / connexion, cookie de session signé,
   hachage Argon2). Seuls `/login`, `/register`, `/logout` et `/static` sont publics.
+- **Administration** : au tout premier démarrage, un compte `admin` est créé
+  avec un mot de passe aléatoire affiché dans la console (journal systemd en
+  production). `/admin/users` (réservé aux admins) permet de réinitialiser les
+  mots de passe et de supprimer des utilisateurs.
 - **htmx** : le tableau de bord (notes) est mis à jour par fragments HTML
   rendus côté serveur, sans rechargement de page.
 - Déploiement sur le VPS (même machine que LotR) : voir `site/publish.sh`

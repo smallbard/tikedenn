@@ -18,7 +18,7 @@ fn user(state: &AppState, jar: &SignedCookieJar) -> CurrentUser {
 #[derive(Template)]
 #[template(path = "dashboard.html")]
 pub struct DashboardTemplate {
-    pub user: Option<String>,
+    pub user: Option<CurrentUser>,
     pub notes_html: String,
     pub is_empty: bool,
 }
@@ -59,8 +59,9 @@ pub async fn dashboard(
     jar: SignedCookieJar,
 ) -> Response {
     let user = user(&state, &jar);
+    let uid = user.id;
     let conn = state.db.get().expect("pool db");
-    let notes = fetch_notes(&conn, user.id);
+    let notes = fetch_notes(&conn, uid);
     let notes_html = notes
         .iter()
         .filter_map(|n| NoteItemTemplate { note: n.clone() }.render().ok())
@@ -68,7 +69,7 @@ pub async fn dashboard(
         .join("\n");
     let is_empty = notes.is_empty();
     auth::render(&DashboardTemplate {
-        user: Some(user.username),
+        user: Some(user),
         notes_html,
         is_empty,
     })

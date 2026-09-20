@@ -27,6 +27,7 @@ pub fn render<T: Template>(t: &T) -> Response {
 pub struct CurrentUser {
     pub id: i64,
     pub username: String,
+    pub is_admin: bool,
 }
 
 /// Utilisateur courant d'après le cookie de session signé (uid).
@@ -34,16 +35,27 @@ pub fn current_user(state: &AppState, jar: &SignedCookieJar) -> Option<CurrentUs
     let uid: i64 = jar.get("uid")?.value().parse().ok()?;
     let conn = state.db.get().ok()?;
     conn.query_row(
-        "SELECT id, username FROM users WHERE id = ?1",
+        "SELECT id, username, is_admin FROM users WHERE id = ?1",
         [uid],
         |r| {
             Ok(CurrentUser {
                 id: r.get(0)?,
                 username: r.get(1)?,
+                is_admin: r.get::<_, i32>(2)? != 0,
             })
         },
     )
     .ok()
+}
+
+/// Hachage Argon2 d'un mot de passe (utilisé par l'inscription et
+/// l'administration).
+pub fn hash_password(password: &str) -> Option<String> {
+    let salt = SaltString::generate(&mut OsRng);
+    Argon2::default()
+        .hash_password(password.as_bytes(), &salt)
+        .ok()
+        .map(|h| h.to_string())
 }
 
 fn session_cookie(uid: i64) -> Cookie<'static> {
@@ -62,7 +74,7 @@ fn session_cookie(uid: i64) -> Cookie<'static> {
 #[derive(Template)]
 #[template(path = "auth_form.html")]
 pub struct AuthFormTemplate {
-    pub user: Option<String>,
+    pub user: Option<CurrentUser>,
     pub is_register: bool,
     pub next: Option<String>,
     pub error: Option<String>,
@@ -128,10 +140,9 @@ pub async fn register(
     if f.password.len() < 8 {
         return fail("Password must be at least 8 characters long.");
     }
-    let salt = SaltString::generate(&mut OsRng);
-    let hash = match Argon2::default().hash_password(f.password.as_bytes(), &salt) {
-        Ok(h) => h.to_string(),
-        Err(_) => return fail("Internal error."),
+    let hash = match hash_password(&f.password) {
+        Some(h) => h,
+        None => return fail("Internal error."),
     };
     let conn = match state.db.get() {
         Ok(c) => c,

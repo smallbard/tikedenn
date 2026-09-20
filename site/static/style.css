@@ -95,3 +95,22 @@ li.note .notehead .date { color: var(--muted); font-size: 0.8rem; margin-left: a
 li.note .notehead .danger { margin-left: 0.5rem; }
 li.note p { margin: 0.4rem 0 0; white-space: pre-wrap; }
 li.empty { color: var(--muted); list-style: none; }
+
+table.user-list {
+  width: 100%;
+  border-collapse: collapse;
+}
+table.user-list th, table.user-list td {
+  text-align: left;
+  padding: 0.45rem 0.7rem;
+  border-bottom: 1px solid var(--border);
+}
+table.user-list th { color: var(--muted); font-weight: 600; }
+table.user-list tr:last-child td { border-bottom: none; }
+form.rowform {
+  display: flex;
+  gap: 0.4rem;
+  align-items: center;
+}
+form.rowform input { padding: 0.3rem 0.5rem; min-width: 130px; }
+form.rowform button { padding: 0.3rem 0.6rem; }

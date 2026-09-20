@@ -1,0 +1,97 @@
+:root {
+  --bg: #101216;
+  --panel: #191d24;
+  --border: #2e3542;
+  --text: #e6e9ef;
+  --muted: #8f97a8;
+  --accent: #4da3ff;
+  --danger: #c05b4d;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  line-height: 1.5;
+}
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+nav {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.6rem 1.2rem;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+}
+nav .brand { font-weight: 700; font-size: 1.1rem; color: var(--text); }
+nav .spacer { flex: 1; }
+nav .who { color: var(--muted); }
+.linklike {
+  background: none;
+  border: none;
+  color: var(--accent);
+  cursor: pointer;
+  font: inherit;
+  padding: 0;
+}
+.linklike:hover { text-decoration: underline; }
+.linklike.danger { color: var(--danger); }
+
+main {
+  max-width: 760px;
+  margin: 1.5rem auto;
+  padding: 0 1.2rem;
+}
+h1 { font-size: 1.5rem; margin-top: 0; }
+
+form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+  max-width: 420px;
+}
+label { display: flex; flex-direction: column; gap: 0.3rem; color: var(--muted); }
+input, textarea {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  padding: 0.5rem 0.7rem;
+  font: inherit;
+}
+input:focus, textarea:focus { outline: 1px solid var(--accent); }
+button {
+  background: var(--accent);
+  border: none;
+  border-radius: 6px;
+  color: #0d1117;
+  font: inherit;
+  font-weight: 600;
+  padding: 0.5rem 1rem;
+  cursor: pointer;
+  align-self: flex-start;
+}
+button:hover { filter: brightness(1.1); }
+
+.error { color: var(--danger); }
+
+ul#notes { list-style: none; padding: 0; }
+li.note {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.7rem 1rem;
+  margin-bottom: 0.7rem;
+}
+li.note .notehead {
+  display: flex;
+  align-items: baseline;
+  gap: 0.7rem;
+}
+li.note .notehead .date { color: var(--muted); font-size: 0.8rem; margin-left: auto; }
+li.note .notehead .danger { margin-left: 0.5rem; }
+li.note p { margin: 0.4rem 0 0; white-space: pre-wrap; }
+li.empty { color: var(--muted); list-style: none; }

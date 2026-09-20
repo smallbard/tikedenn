@@ -1,0 +1,6 @@
+/target
+site/publish/
+site/*.tar
+site/app.prod.sqlite
+site/secret.key
+*.sqlite

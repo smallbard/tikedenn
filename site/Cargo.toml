@@ -1,0 +1,18 @@
+[package]
+name = "tikedenn-site"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+axum = "0.8"
+axum-extra = { version = "0.10", features = ["cookie-signed"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+tower-http = { version = "0.6", features = ["fs"] }
+askama = "0.12"
+rusqlite = { version = "0.37", features = ["bundled"] }
+r2d2 = "0.8"
+r2d2_sqlite = "0.31"
+argon2 = "0.5"
+rand = "0.8"
+serde = { version = "1", features = ["derive"] }
+anyhow = "1"

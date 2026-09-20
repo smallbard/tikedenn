@@ -1,0 +1,206 @@
+use crate::AppState;
+use argon2::{
+    password_hash::{rand_core::OsRng, PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
+    Argon2,
+};
+use askama::Template;
+use axum::{
+    extract::State,
+    response::{Html, IntoResponse, Redirect, Response},
+    Form,
+};
+use axum_extra::extract::cookie::{Cookie, SameSite, SignedCookieJar};
+use serde::Deserialize;
+
+pub fn render<T: Template>(t: &T) -> Response {
+    match t.render() {
+        Ok(html) => Html(html).into_response(),
+        Err(e) => (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            format!("template error: {e}"),
+        )
+            .into_response(),
+    }
+}
+
+#[derive(Clone)]
+pub struct CurrentUser {
+    pub id: i64,
+    pub username: String,
+}
+
+/// Utilisateur courant d'après le cookie de session signé (uid).
+pub fn current_user(state: &AppState, jar: &SignedCookieJar) -> Option<CurrentUser> {
+    let uid: i64 = jar.get("uid")?.value().parse().ok()?;
+    let conn = state.db.get().ok()?;
+    conn.query_row(
+        "SELECT id, username FROM users WHERE id = ?1",
+        [uid],
+        |r| {
+            Ok(CurrentUser {
+                id: r.get(0)?,
+                username: r.get(1)?,
+            })
+        },
+    )
+    .ok()
+}
+
+fn session_cookie(uid: i64) -> Cookie<'static> {
+    let mut b = Cookie::build(("uid", uid.to_string()))
+        .path("/")
+        .http_only(true)
+        .same_site(SameSite::Lax)
+        .permanent();
+    // En production (derrière TLS), définir COOKIE_SECURE=1 dans le service.
+    if std::env::var("COOKIE_SECURE").is_ok() {
+        b = b.secure(true);
+    }
+    b.build()
+}
+
+#[derive(Template)]
+#[template(path = "auth_form.html")]
+pub struct AuthFormTemplate {
+    pub user: Option<String>,
+    pub is_register: bool,
+    pub next: Option<String>,
+    pub error: Option<String>,
+}
+
+pub async fn login_form() -> Response {
+    render(&AuthFormTemplate {
+        user: None,
+        is_register: false,
+        next: None,
+        error: None,
+    })
+}
+
+pub async fn register_form() -> Response {
+    render(&AuthFormTemplate {
+        user: None,
+        is_register: true,
+        next: None,
+        error: None,
+    })
+}
+
+fn auth_redirect(next: &Option<String>) -> Response {
+    let target = match next {
+        // ?next=/... uniquement : pas d'URL externe (open redirect).
+        Some(n) if n.starts_with('/') => Redirect::to(n),
+        _ => Redirect::to("/"),
+    };
+    target.into_response()
+}
+
+#[derive(Deserialize)]
+pub struct RegisterForm {
+    username: String,
+    email: String,
+    password: String,
+    #[serde(default)]
+    next: Option<String>,
+}
+
+pub async fn register(
+    State(state): State<AppState>,
+    jar: SignedCookieJar,
+    Form(f): Form<RegisterForm>,
+) -> Response {
+    let username = f.username.trim().to_string();
+    let email = f.email.trim().to_string();
+    let fail = |msg: &str| {
+        render(&AuthFormTemplate {
+            user: None,
+            is_register: true,
+            next: f.next.clone(),
+            error: Some(msg.to_string()),
+        })
+    };
+    if username.len() < 3 || username.len() > 32 {
+        return fail("Le pseudo doit faire entre 3 et 32 caractères.");
+    }
+    if !email.contains('@') {
+        return fail("Adresse e-mail invalide.");
+    }
+    if f.password.len() < 8 {
+        return fail("Le mot de passe doit faire au moins 8 caractères.");
+    }
+    let salt = SaltString::generate(&mut OsRng);
+    let hash = match Argon2::default().hash_password(f.password.as_bytes(), &salt) {
+        Ok(h) => h.to_string(),
+        Err(_) => return fail("Erreur interne."),
+    };
+    let conn = match state.db.get() {
+        Ok(c) => c,
+        Err(_) => return fail("Erreur interne."),
+    };
+    match conn.execute(
+        "INSERT INTO users (username, email, pass_hash) VALUES (?1, ?2, ?3)",
+        rusqlite::params![username, email, hash],
+    ) {
+        Ok(_) => {
+            let uid = conn.last_insert_rowid();
+            let jar = jar.add(session_cookie(uid));
+            let target = auth_redirect(&f.next);
+            (jar, target).into_response()
+        }
+        Err(_) => fail("Ce pseudo ou cet e-mail est déjà utilisé."),
+    }
+}
+
+#[derive(Deserialize)]
+pub struct LoginForm {
+    username: String,
+    password: String,
+    #[serde(default)]
+    next: Option<String>,
+}
+
+pub async fn login(
+    State(state): State<AppState>,
+    jar: SignedCookieJar,
+    Form(f): Form<LoginForm>,
+) -> Response {
+    let fail = || {
+        render(&AuthFormTemplate {
+            user: None,
+            is_register: false,
+            next: f.next.clone(),
+            error: Some("Identifiants incorrects.".to_string()),
+        })
+    };
+    let conn = match state.db.get() {
+        Ok(c) => c,
+        Err(_) => return fail(),
+    };
+    let row: Result<(i64, String), _> = conn.query_row(
+        "SELECT id, pass_hash FROM users WHERE username = ?1 OR email = ?1",
+        [f.username.trim()],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    );
+    let (uid, hash) = match row {
+        Ok(v) => v,
+        Err(_) => return fail(),
+    };
+    let parsed = match PasswordHash::new(&hash) {
+        Ok(p) => p,
+        Err(_) => return fail(),
+    };
+    if Argon2::default()
+        .verify_password(f.password.as_bytes(), &parsed)
+        .is_err()
+    {
+        return fail();
+    }
+    let jar = jar.add(session_cookie(uid));
+    let target = auth_redirect(&f.next);
+    (jar, target).into_response()
+}
+
+pub async fn logout(jar: SignedCookieJar) -> Response {
+    let jar = jar.remove(Cookie::from("uid"));
+    (jar, Redirect::to("/login")).into_response()
+}

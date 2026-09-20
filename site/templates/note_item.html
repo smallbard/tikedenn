@@ -1,0 +1,8 @@
+<li class="note">
+  <div class="notehead">
+    <strong>{{ note.title }}</strong>
+    <span class="date">{{ note.created_at }}</span>
+    <button class="linklike danger" hx-post="/notes/{{ note.id }}/delete" hx-swap="outerHTML">✕</button>
+  </div>
+  {% if !note.body.is_empty() %}<p>{{ note.body }}</p>{% endif %}
+</li>

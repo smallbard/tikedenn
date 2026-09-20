@@ -4,7 +4,7 @@ mod board;
 mod db;
 
 use axum::{
-    extract::{Request, State},
+    extract::{DefaultBodyLimit, Request, State},
     middleware::{self, Next},
     response::{IntoResponse, Redirect, Response},
     routing::{get, post},
@@ -96,6 +96,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Zone protégée : seule l'accueil (/) décide entre connexion et tableau
     // de bord, tout le reste est derrière require_auth.
+    // 11 Mo : fichier de 10 Mo + overhead multipart (axum limite à 2 Mo par défaut).
     let protected = Router::new()
         .route("/dashboard", get(board::dashboard))
         .route("/projects", get(board::projects_page).post(board::create_project))
@@ -114,7 +115,8 @@ async fn main() -> anyhow::Result<()> {
         .route_layer(middleware::from_fn_with_state(
             state.clone(),
             require_auth,
-        ));
+        ))
+        .layer(DefaultBodyLimit::max(11 * 1024 * 1024));
 
     let router = Router::new()
         .route("/", get(index))

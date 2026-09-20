@@ -496,7 +496,16 @@ pub async fn upload_file(
     loop {
         let field = match multipart.next_field().await {
             Ok(Some(f)) => f,
-            _ => break,
+            Ok(None) => break,
+            Err(_) => {
+                // Erreur multipart (corps tronqué par la limite de taille, etc.) :
+                // ne pas laisser passer comme un upload vide.
+                return (
+                    axum::http::StatusCode::BAD_REQUEST,
+                    "Upload failed (request body too large or malformed).",
+                )
+                    .into_response();
+            }
         };
         if field.name() == Some("filter") {
             if let Ok(t) = field.text().await {

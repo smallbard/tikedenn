@@ -39,6 +39,7 @@
       <button type="submit">Move</button>
     </form>
     <form method="post" action="/tasks/{{ task.id }}/delete" hx-post="/tasks/{{ task.id }}/delete" hx-target="#board" hx-swap="outerHTML"
+          hx-confirm="Delete this task and its files?"
           onsubmit="return confirm('Delete this task and its files?')">
       <input type="hidden" name="filter" value="{{ filter }}">
       <button type="submit" class="linklike danger">Delete</button>

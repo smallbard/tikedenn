@@ -7,6 +7,7 @@
 <form method="post" action="/projects" class="rowform new-project">
   <input name="name" placeholder="Project name" required maxlength="64" class="grow">
   <input name="git_repo" placeholder="Git repository URL (optional)" class="grow">
+  <input name="git_token" type="password" placeholder="Git token for private repo (optional)" autocomplete="new-password" maxlength="256" class="grow">
   <button type="submit">Add</button>
 </form>
 
@@ -22,14 +23,19 @@
     </div>
     {% if !p.git_repo.is_empty() %}
     {% if p.git_repo_is_link() %}
-    <p class="card-desc"><a href="{{ p.git_repo }}" rel="noopener">{{ p.git_repo }}</a></p>
+    <p class="card-desc"><a href="{{ p.git_repo }}" rel="noopener">{{ p.git_repo }}</a>
+      {% if p.has_token %}<span title="A token is stored for this repository (used to clone private repos)" class="token-badge">&#128274; token</span>{% endif %}
+    </p>
     {% else %}
-    <p class="card-desc">{{ p.git_repo }}</p>
+    <p class="card-desc">{{ p.git_repo }}
+      {% if p.has_token %}<span title="A token is stored for this repository (used to clone private repos)" class="token-badge">&#128274; token</span>{% endif %}
+    </p>
     {% endif %}
     {% endif %}
     <form method="post" action="/projects/{{ p.id }}" class="rowform">
       <input name="name" value="{{ p.name }}" required maxlength="64" class="grow">
       <input name="git_repo" value="{{ p.git_repo }}" placeholder="Git repository URL" class="grow">
+      <input name="git_token" type="password" placeholder="Leave empty to keep the current token" autocomplete="new-password" maxlength="256" class="grow">
       <button type="submit">Save</button>
     </form>
     <form method="post" action="/projects/{{ p.id }}/delete" class="rowform"

@@ -16,11 +16,14 @@ pub fn init_app_schema(conn: &Connection) -> anyhow::Result<()> {
         );
 
         -- Un projet regroupe des tâches et référence un dépôt git.
+        -- `git_token` : token optionnel pour les dépôts privés en https
+        -- (authentification du clone lors du calcul du diff branche).
         CREATE TABLE IF NOT EXISTS projects (
             id         INTEGER PRIMARY KEY,
             user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
             name       TEXT NOT NULL,
             git_repo   TEXT NOT NULL DEFAULT '',
+            git_token  TEXT NOT NULL DEFAULT '',
             created_at TEXT NOT NULL DEFAULT (datetime('now')),
             UNIQUE (user_id, name)
         );
@@ -118,6 +121,22 @@ pub fn init_app_schema(conn: &Connection) -> anyhow::Result<()> {
         .unwrap_or(true);
     if !has_branch {
         let _ = conn.execute("ALTER TABLE tasks ADD COLUMN branch TEXT NOT NULL DEFAULT ''", []);
+    }
+
+    // Migration : schémas antérieurs à la colonne `projects.git_token`
+    // (token des dépôts privés en https).
+    let has_token = conn
+        .prepare("PRAGMA table_info(projects)")
+        .and_then(|mut st| {
+            st.query_map([], |r| r.get::<_, String>(1))
+                .map(|it| it.flatten().any(|n| n == "git_token"))
+        })
+        .unwrap_or(true);
+    if !has_token {
+        let _ = conn.execute(
+            "ALTER TABLE projects ADD COLUMN git_token TEXT NOT NULL DEFAULT ''",
+            [],
+        );
     }
     Ok(())
 }

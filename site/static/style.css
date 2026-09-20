@@ -267,3 +267,5 @@ form.rowform button { padding: 0.3rem 0.6rem; }
 .diff-add { background: #e6f4e6; color: #1a7f37; }
 .diff-del { background: #fdecec; color: #cf222e; }
 .diff-hdr { background: var(--bg); color: #6e7781; }
+/* Badge « token configuré » sur la carte projet */
+.token-badge { margin-left: 0.4rem; color: #6e7781; cursor: help; }

@@ -11,7 +11,7 @@ use axum::{
     response::{IntoResponse, Redirect, Response},
     Form,
 };
-use git2::{DiffFlags, Patch, Repository};
+use git2::{Cred, DiffFlags, FetchOptions, Patch, RemoteCallbacks, Repository};
 use rand::Rng;
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -50,6 +50,8 @@ pub struct ProjectRow {
     pub id: i64,
     pub name: String,
     pub git_repo: String,
+    /// Token optionnel (dépôt privé en https) ; jamais affiché dans l'UI.
+    pub token: String,
 }
 
 #[derive(Clone)]
@@ -97,14 +99,15 @@ pub struct Column {
 
 fn fetch_projects(conn: &rusqlite::Connection, user_id: i64) -> Vec<ProjectRow> {
     let mut out = vec![];
-    if let Ok(mut st) = conn
-        .prepare("SELECT id, name, git_repo FROM projects WHERE user_id = ?1 ORDER BY name COLLATE NOCASE")
-    {
+    if let Ok(mut st) = conn.prepare(
+        "SELECT id, name, git_repo, git_token FROM projects WHERE user_id = ?1 ORDER BY name COLLATE NOCASE",
+    ) {
         if let Ok(rows) = st.query_map([user_id], |r| {
             Ok(ProjectRow {
                 id: r.get(0)?,
                 name: r.get(1)?,
                 git_repo: r.get(2)?,
+                token: r.get(3)?,
             })
         }) {
             out.extend(rows.filter_map(|r| r.ok()));
@@ -184,15 +187,15 @@ fn fetch_files_for_board(
 }
 
 /// Colonnes communes à `fetch_tasks` et `fetch_one_task` (lues par `task_from_row`).
-const TASK_SELECT: &str = "SELECT t.id, t.project_id, p.id, p.name, p.git_repo, t.status, t.branch, t.title,
+const TASK_SELECT: &str = "SELECT t.id, t.project_id, p.id, p.name, p.git_repo, p.git_token, t.status, t.branch, t.title,
                                   t.description, t.created_at
                            FROM tasks t LEFT JOIN projects p ON p.id = t.project_id";
 
 /// Construit une `TaskRow` (sans ses fichiers) depuis une ligne de `TASK_SELECT`.
 fn task_from_row(r: &rusqlite::Row) -> rusqlite::Result<TaskRow> {
-    // Colonnes : 0=t.id, 1=t.project_id, 2=p.id, 3=p.name, 4=p.git_repo,
-    //           5=t.status, 6=t.branch, 7=t.title, 8=t.description, 9=t.created_at
-    let desc: String = r.get(8)?;
+    // Colonnes : 0=t.id, 1=t.project_id, 2=p.id, 3=p.name, 4=p.git_repo, 5=p.git_token,
+    //           6=t.status, 7=t.branch, 8=t.title, 9=t.description, 10=t.created_at
+    let desc: String = r.get(9)?;
     Ok(TaskRow {
         id: r.get(0)?,
         project_id: r.get::<_, Option<i64>>(1)?,
@@ -201,16 +204,17 @@ fn task_from_row(r: &rusqlite::Row) -> rusqlite::Result<TaskRow> {
                 id: r.get(2)?,
                 name: r.get(3)?,
                 git_repo: r.get(4)?,
+                token: r.get(5)?,
             })
         } else {
             None
         },
-        status: r.get(5)?,
-        branch: r.get(6)?,
-        title: r.get(7)?,
+        status: r.get(6)?,
+        branch: r.get(7)?,
+        title: r.get(8)?,
         description_preview: first_line_preview(&desc),
         description: desc,
-        created_at: r.get(9)?,
+        created_at: r.get(10)?,
         files: vec![],
     })
 }
@@ -802,6 +806,8 @@ pub struct ProjectItemRow {
     pub name: String,
     pub git_repo: String,
     pub tasks: i64,
+    /// Un token est configuré pour ce dépôt (indicateur, jamais affiché en clair).
+    pub has_token: bool,
 }
 
 impl ProjectItemRow {
@@ -821,7 +827,8 @@ pub async fn projects_page(
     let mut projects = vec![];
     if let Ok(mut st) = conn.prepare(
         "SELECT p.id, p.name, p.git_repo,
-                (SELECT COUNT(*) FROM tasks t WHERE t.project_id = p.id)
+                (SELECT COUNT(*) FROM tasks t WHERE t.project_id = p.id),
+                (p.git_token != '')
          FROM projects p WHERE p.user_id = ?1 ORDER BY p.name COLLATE NOCASE",
     ) {
         if let Ok(rows) = st.query_map([user.id], |r| {
@@ -830,6 +837,7 @@ pub async fn projects_page(
                 name: r.get(1)?,
                 git_repo: r.get(2)?,
                 tasks: r.get(3)?,
+                has_token: r.get(4)?,
             })
         }) {
             projects.extend(rows.filter_map(|r| r.ok()));
@@ -853,16 +861,25 @@ pub struct ProjectForm {
     name: String,
     #[serde(default)]
     git_repo: String,
+    #[serde(default)]
+    git_token: String,
 }
 
-/// Valide nom + dépôt d'un projet ; renvoie le message d'erreur (UI) sinon.
+/// Valide nom, dépôt et token d'un projet ; renvoie le message d'erreur (UI) sinon.
 /// La longueur est comptée en caractères, comme le `maxlength` du formulaire.
-fn validate_project(name: &str, repo: &str) -> Result<(), &'static str> {
+fn validate_project(name: &str, repo: &str, token: &str) -> Result<(), &'static str> {
     if name.is_empty() || name.chars().count() > 64 {
         return Err("Project name must be 1 to 64 characters.");
     }
     if !repo.is_empty() && !is_safe_repo_url(repo) {
         return Err("Git repo must start with http(s)://, ssh:// or git@.");
+    }
+    // Token : au plus 256 caractères ASCII imprimables (pas d'espace, pas de retour
+    // à la ligne), sinon il serait ambigu en base / dans les en-têtes http.
+    if !token.is_empty()
+        && (token.chars().count() > 256 || token.chars().any(|c| !c.is_ascii_graphic()))
+    {
+        return Err("Git token must be 1 to 256 printable ASCII characters.");
     }
     Ok(())
 }
@@ -901,13 +918,14 @@ pub async fn create_project(
 ) -> Response {
     let name = f.name.trim().to_string();
     let repo = f.git_repo.trim().to_string();
-    if let Err(msg) = validate_project(&name, &repo) {
+    let token = f.git_token.trim().to_string();
+    if let Err(msg) = validate_project(&name, &repo, &token) {
         return projects_error(msg);
     }
     let conn = state.db.get().expect("pool db");
     if let Err(e) = conn.execute(
-        "INSERT INTO projects (user_id, name, git_repo) VALUES (?1, ?2, ?3)",
-        rusqlite::params![user.id, name, repo],
+        "INSERT INTO projects (user_id, name, git_repo, git_token) VALUES (?1, ?2, ?3, ?4)",
+        rusqlite::params![user.id, name, repo, token],
     ) {
         return projects_error(project_write_error(&e));
     }
@@ -923,13 +941,26 @@ pub async fn update_project(
 ) -> Response {
     let name = f.name.trim().to_string();
     let repo = f.git_repo.trim().to_string();
-    if let Err(msg) = validate_project(&name, &repo) {
+    let form_token = f.git_token.trim();
+    if let Err(msg) = validate_project(&name, &repo, form_token) {
         return projects_error(msg);
     }
     let conn = state.db.get().expect("pool db");
+    // Token vide dans le formulaire : on conserve le token déjà stocké
+    // (l'UI ne le ré-affiche jamais).
+    let token = if form_token.is_empty() {
+        conn.query_row(
+            "SELECT git_token FROM projects WHERE id = ?1 AND user_id = ?2",
+            rusqlite::params![id, user.id],
+            |r| r.get::<_, String>(0),
+        )
+        .unwrap_or_default()
+    } else {
+        form_token.to_string()
+    };
     if let Err(e) = conn.execute(
-        "UPDATE projects SET name = ?1, git_repo = ?2 WHERE id = ?3 AND user_id = ?4",
-        rusqlite::params![name, repo, id, user.id],
+        "UPDATE projects SET name = ?1, git_repo = ?2, git_token = ?3 WHERE id = ?4 AND user_id = ?5",
+        rusqlite::params![name, repo, token, id, user.id],
     ) {
         return projects_error(project_write_error(&e));
     }
@@ -1002,13 +1033,38 @@ fn find_commit_named<'a>(
 
 /// Clone le dépôt dans un répertoire temporaire et calcule le diff
 /// (arbres de commits) `branch` vs la branche de base (main, sinon master).
-/// Renvoie (nom de la base, fichiers de la diff).
+/// `token` : token optionnel du projet, utilisé en authentification http(s)
+/// (dépôts privés GitHub/GitLab/Gitea). Renvoie (nom de la base, fichiers de la diff).
 fn compute_branch_diff(
     repo_url: &str,
     branch: &str,
+    token: &str,
     workdir: &std::path::Path,
 ) -> Result<(String, Vec<DiffFile>), String> {
-    let repo = Repository::clone(repo_url, workdir)
+    // Clone manuel (init + remote + fetch) pour pouvoir injecter un callback
+    // d'authentification avant le téléchargement.
+    let repo =
+        Repository::init(workdir).map_err(|e| format!("Could not initialize the clone: {e}"))?;
+    let mut remote = repo
+        .remote("origin", repo_url)
+        .map_err(|e| format!("Could not add the remote {repo_url}: {e}"))?;
+    let mut opts = FetchOptions::new();
+    let is_http = {
+        let l = repo_url.to_ascii_lowercase();
+        l.starts_with("http://") || l.starts_with("https://")
+    };
+    if is_http && !token.trim().is_empty() {
+        let tok = token.trim().to_string();
+        let mut cbs = RemoteCallbacks::new();
+        // N'importe quel pseudo fonctionne avec les tokens GitHub / GitLab / Gitea ;
+        // le token sert de mot de passe (basic auth https).
+        cbs.credentials(move |_url, _username, _allowed_types| {
+            Cred::userpass_plaintext("x-access-token", &tok)
+        });
+        opts.remote_callbacks(cbs);
+    }
+    remote
+        .fetch::<&str>(&[], Some(&mut opts), None)
         .map_err(|e| format!("Could not clone {repo_url}: {e}"))?;
     let (base, base_commit) = find_commit_named(
         &repo,
@@ -1165,7 +1221,12 @@ pub async fn task_diff_page(
         "tikedenn-git-{id}-{}",
         rand::thread_rng().gen::<u32>()
     ));
-    let res = compute_branch_diff(project.git_repo.trim(), task.branch.trim(), &workdir);
+    let res = compute_branch_diff(
+        project.git_repo.trim(),
+        task.branch.trim(),
+        &project.token,
+        &workdir,
+    );
     let _ = std::fs::remove_dir_all(&workdir); // nettoyage best effort
 
     match res {

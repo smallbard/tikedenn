@@ -24,9 +24,11 @@
   <textarea name="description" rows="8" placeholder="Description / full specification">{{ task.description }}</textarea>
   <div class="form-actions">
     <button type="submit">Save</button>
-    {% for s in statuses %}
-    <button type="submit" name="status" value="{{ s.value }}" class="st-{{ s.value }}{% if s.value == task.status %} st-current{% endif %}" title="Move to {{ s.label }}">{{ s.label }}</button>
-    {% endfor %}
+    <div class="status-buttons">
+      {% for s in statuses %}
+      <button type="submit" name="status" value="{{ s.value }}" class="st-{{ s.value }}{% if s.value == task.status %} st-current{% endif %}" title="Move to {{ s.label }}">{{ s.label }}</button>
+      {% endfor %}
+    </div>
   </div>
 </form>
 

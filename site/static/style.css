@@ -259,6 +259,7 @@ form.rowform button { padding: 0.3rem 0.6rem; }
 .st-review { border-top: 3px solid #9b7ed8; }
 .st-deploy { border-top: 3px solid #e0715e; }
 .st-done { border-top: 3px solid #5fb86f; }
+.status-buttons { display: flex; gap: 0.5rem; margin-left: 1rem; }
 .st-current { background: var(--accent); color: #fff; font-weight: 600; }
 .st-current:hover { filter: none; }
 .files-section { margin-top: 1rem; border-top: 1px solid var(--border); padding-top: 0.8rem; }

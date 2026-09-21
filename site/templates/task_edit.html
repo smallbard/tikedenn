@@ -57,9 +57,9 @@
     {% endfor %}
   </ul>
   {% endif %}
-  <form method="post" action="/tasks/{{ task.id }}/files" enctype="multipart/form-data" class="rowform">
+  <form method="post" action="/tasks/{{ task.id }}/files" enctype="multipart/form-data" class="rowform fileform">
     <input type="hidden" name="filter" value="{{ filter }}">
-    <input type="file" name="file" required class="grow">
+    <input type="file" name="file" required>
     <button type="submit">Attach</button>
   </form>
 </section>

@@ -249,6 +249,9 @@ form.rowform {
 }
 form.rowform input { padding: 0.3rem 0.5rem; min-width: 130px; }
 form.rowform button { padding: 0.3rem 0.6rem; }
+/* Form d'ajout de fichier : input à gauche (étiré), bouton Attach à droite. */
+form.fileform input[type="file"] { flex: 1; min-width: 0; }
+form.fileform button { margin-left: auto; }
 
 /* Page d'édition d'une tâche */
 .form-actions { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }

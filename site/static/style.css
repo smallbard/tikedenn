@@ -58,8 +58,9 @@ form {
   display: flex;
   flex-direction: column;
   gap: 0.7rem;
-  max-width: 420px;
 }
+/* Le max-width ne s'applique qu'au formulaire de login/signup. */
+.authform { max-width: 420px; }
 label { display: flex; flex-direction: column; gap: 0.3rem; color: var(--muted); }
 input, textarea {
   background: var(--panel);
@@ -90,7 +91,6 @@ button:hover { filter: brightness(1.1); }
   flex-direction: column;
   align-items: stretch;
   gap: 0.6rem;
-  max-width: 640px;
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 8px;

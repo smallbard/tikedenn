@@ -244,6 +244,7 @@ table.user-list th { color: var(--muted); font-weight: 600; }
 table.user-list tr:last-child td { border-bottom: none; }
 form.rowform {
   display: flex;
+  flex-direction: row;
   gap: 0.4rem;
   align-items: center;
 }

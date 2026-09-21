@@ -64,7 +64,7 @@
   </form>
 </section>
 
-<form method="post" action="/tasks/{{ task.id }}/delete"
+<form method="post" action="/tasks/{{ task.id }}/delete" class="delete-task"
       onsubmit="return confirm('Delete this task and its files?')">
   <input type="hidden" name="filter" value="{{ filter }}">
   <button type="submit" class="linklike danger">Delete this task</button>

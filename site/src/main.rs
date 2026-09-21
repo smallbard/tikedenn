@@ -137,7 +137,6 @@ async fn main() -> anyhow::Result<()> {
         .route("/", get(index))
         .merge(public)
         .merge(protected)
-        .layer(middleware::from_fn(add_no_cache))
         .with_state(state);
 
     let addr = std::env::var("BIND").unwrap_or_else(|_| "127.0.0.1:3002".into());
@@ -175,18 +174,6 @@ fn seed_default_admin(conn: &rusqlite::Connection) {
             "[tikedenn] Default admin account created — username: \"admin\", password: \"{password}\". Change it from /admin/users after logging in."
         );
     }
-}
-
-/// Ajoute `Cache-Control: no-cache` à toutes les réponses : le navigateur doit
-/// revalider à chaque requête, sinon son cache heuristique sert de vieilles
-/// versions du CSS/JS (les pages HTML n'ont pas d'ETag fiable de toute façon).
-async fn add_no_cache(req: Request, next: Next) -> Response {
-    let mut resp = next.run(req).await;
-    resp.headers_mut().insert(
-        axum::http::header::CACHE_CONTROL,
-        axum::http::HeaderValue::from_static("no-cache"),
-    );
-    resp
 }
 
 /// Racine : tableau de bord si connecté, page de présentation sinon.

@@ -86,7 +86,7 @@ button:hover { filter: brightness(1.1); }
 
 .error { color: var(--danger); }
 
-// ---------------------------------------------------------------- kanban
+/* kanban */
 .new-task {
   flex-direction: column;
   align-items: stretch;
@@ -214,10 +214,7 @@ ul.files li small { color: var(--muted); }
 ul.files li form { display: inline; }
 ul.files li a { word-break: break-all; }
 
-// projets
 /* Form d'ajout de projet : espacée en-dessous de la liste des projets. */
-.new-project { margin: 1rem 0 3rem; }
-.new-project input.grow { flex: 1; min-width: 160px; }
 .projects { display: grid; grid-template-columns: repeat(2, 1fr); gap: 1rem; }
 @media (max-width: 700px) { .projects { grid-template-columns: 1fr; } }
 .card.project {
@@ -315,3 +312,6 @@ form.delete-task { margin-top: 1.2rem; }
 .feat-list { max-width: 720px; padding-left: 1.2rem; margin: 0 auto; }
 .feat-list li { margin-bottom: 0.5rem; }
 .landing-hero code, .landing-feats code { background: var(--panel); border: 1px solid var(--border); border-radius: 4px; padding: 0.05rem 0.3rem; }
+
+.new-project { margin: 1rem 0 2rem; }
+.new-project input.grow { flex: 1; min-width: 160px; }

@@ -414,9 +414,27 @@ pub async fn dashboard(
 
 #[derive(Deserialize)]
 pub struct BoardQuery {
+    /// Filtre par projet : tolère « project= » (vide, via « All projects ») → None.
+    #[serde(default, deserialize_with = "deserialize_opt_i64")]
     project: Option<i64>,
     /// Message d'erreur à réafficher (page de création d'une tâche).
     error: Option<String>,
+}
+
+/// Option<i64> tolérante : champ absent OU chaîne vide → None.
+/// (serde traite par défaut « project= » comme Some("") qui échoue le parse.)
+fn deserialize_opt_i64<'de, D>(d: D) -> Result<Option<i64>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let s = String::deserialize(d)?;
+    if s.is_empty() {
+        Ok(None)
+    } else {
+        s.parse::<i64>()
+            .map(Some)
+            .map_err(|e| serde::de::Error::custom(e.to_string()))
+    }
 }
 
 #[derive(Deserialize)]

@@ -216,7 +216,7 @@ ul.files li a { word-break: break-all; }
 
 // projets
 /* Form d'ajout de projet : espacée en-dessous de la liste des projets. */
-.new-project { margin: 1rem 0 2rem; }
+.new-project { margin: 1rem 0 3rem; }
 .new-project input.grow { flex: 1; min-width: 160px; }
 .projects { display: grid; grid-template-columns: repeat(2, 1fr); gap: 1rem; }
 @media (max-width: 700px) { .projects { grid-template-columns: 1fr; } }

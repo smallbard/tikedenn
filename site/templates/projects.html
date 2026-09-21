@@ -33,9 +33,9 @@
     {% endif %}
     {% endif %}
     <form method="post" action="/projects/{{ p.id }}" class="rowform">
-      <input name="name" value="{{ p.name }}" required maxlength="64" class="grow">
-      <input name="git_repo" value="{{ p.git_repo }}" placeholder="Git repository URL" class="grow">
-      <input name="git_token" type="password" placeholder="Leave empty to keep the current token" autocomplete="new-password" maxlength="256" class="grow">
+      <label class="field"><span>Name</span><input name="name" value="{{ p.name }}" required maxlength="64" class="grow"></label>
+      <label class="field"><span>Git repository</span><input name="git_repo" value="{{ p.git_repo }}" placeholder="Git repository URL" class="grow"></label>
+      <label class="field"><span>Git token</span><input name="git_token" type="password" placeholder="Leave empty to keep the current token" autocomplete="new-password" maxlength="256" class="grow"></label>
       <button type="submit">Save</button>
     </form>
     <form method="post" action="/projects/{{ p.id }}/delete" class="rowform"

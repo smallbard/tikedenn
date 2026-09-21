@@ -251,7 +251,16 @@ form.rowform input { padding: 0.3rem 0.5rem; min-width: 130px; }
 form.rowform button { padding: 0.3rem 0.6rem; }
 
 /* Page d'édition d'une tâche */
-.form-actions { display: flex; gap: 0.5rem; align-items: center; }
+.form-actions { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
+/* Boutons d'état de la page d'édition : mêmes couleurs que les colonnes du tableau. */
+.st-draft { border-top: 3px solid #8f97a8; }
+.st-todo { border-top: 3px solid #4da3ff; }
+.st-progress { border-top: 3px solid #d8a63a; }
+.st-review { border-top: 3px solid #9b7ed8; }
+.st-deploy { border-top: 3px solid #e0715e; }
+.st-done { border-top: 3px solid #5fb86f; }
+.st-current { background: var(--accent); color: #fff; font-weight: 600; }
+.st-current:hover { filter: none; }
 .files-section { margin-top: 1rem; border-top: 1px solid var(--border); padding-top: 0.8rem; }
 .files-section h2 { font-size: 1rem; margin: 0 0 0.5rem; }
 

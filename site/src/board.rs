@@ -430,6 +430,9 @@ pub struct TaskForm {
     /// Branche git optionnelle associée à la tâche.
     #[serde(default)]
     branch: String,
+    /// État cible (bouton d'état de la page d'édition) ; vide = inchangé.
+    #[serde(default)]
+    status: String,
     /// Filtre projet actif du tableau, à préserver après la création (0 = tous).
     #[serde(default)]
     filter: i64,
@@ -552,6 +555,9 @@ pub async fn update_task(
     if !branch.is_empty() && !is_safe_branch(&branch) {
         return redirect_edit(id, f.filter, Some("Invalid branch name."));
     }
+    if !f.status.is_empty() && !STATUSES.iter().any(|(v, _)| *v == f.status) {
+        return redirect_edit(id, f.filter, Some("Unknown task state."));
+    }
     let project_id: Option<i64> = if f.project > 0 {
         let conn = state.db.get().expect("pool db");
         match conn.query_row(
@@ -569,9 +575,10 @@ pub async fn update_task(
     if conn
         .execute(
             "UPDATE tasks SET title = ?1, description = ?2, project_id = ?3, branch = ?4,
+             status = COALESCE(NULLIF(?7, ''), status),
              updated_at = datetime('now')
              WHERE id = ?5 AND user_id = ?6",
-            rusqlite::params![title, f.description.trim(), project_id, branch, id, user.id],
+            rusqlite::params![title, f.description.trim(), project_id, branch, id, user.id, f.status],
         )
         .is_err()
     {

@@ -22,17 +22,12 @@
   </select>
   <input name="branch" value="{{ task.branch }}" placeholder="Git branch (optional, e.g. feature/my-change)" maxlength="200" class="grow">
   <textarea name="description" rows="8" placeholder="Description / full specification">{{ task.description }}</textarea>
-  <div class="form-actions"><button type="submit">Save</button></div>
-</form>
-
-<form method="post" action="/tasks/{{ task.id }}/move" class="rowform">
-  <input type="hidden" name="filter" value="{{ filter }}">
-  <select name="status">
+  <div class="form-actions">
+    <button type="submit">Save</button>
     {% for s in statuses %}
-    <option value="{{ s.value }}" {% if s.value == task.status %}selected{% endif %}>{{ s.label }}</option>
+    <button type="submit" name="status" value="{{ s.value }}" class="st-{{ s.value }}{% if s.value == task.status %} st-current{% endif %}" title="Move to {{ s.label }}">{{ s.label }}</button>
     {% endfor %}
-  </select>
-  <button type="submit">Move to</button>
+  </div>
 </form>
 
 <section class="files-section">

@@ -17,15 +17,24 @@ pub fn init_app_schema(conn: &Connection) -> anyhow::Result<()> {
 
         -- Un projet regroupe des tâches et référence un dépôt git.
         -- Partagé entre TOUS les utilisateurs (pas de user_id) ; le nom est
-        -- unique globalement. `git_token` : token optionnel pour les dépôts
-        -- privés en https (authentification du clone lors du diff branche).
+        -- unique globalement. Le token git (dépôt privé en https, pour le
+        -- clone lors du diff branche) est stocké dans `project_tokens`,
+        -- lié au couple (projet, utilisateur) : chacun son propre token.
         CREATE TABLE IF NOT EXISTS projects (
             id         INTEGER PRIMARY KEY,
             name       TEXT NOT NULL,
             git_repo   TEXT NOT NULL DEFAULT '',
-            git_token  TEXT NOT NULL DEFAULT '',
             created_at TEXT NOT NULL DEFAULT (datetime('now')),
             UNIQUE (name)
+        );
+
+        -- Token git par couple (projet, utilisateur) — voir commentaire
+        -- de la table `projects`.
+        CREATE TABLE IF NOT EXISTS project_tokens (
+            project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+            user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            token      TEXT NOT NULL,
+            PRIMARY KEY (project_id, user_id)
         );
 
         -- Tâches du tableau kanban : draft → todo → progress → review → deploy → done.
@@ -180,6 +189,57 @@ pub fn init_app_schema(conn: &Connection) -> anyhow::Result<()> {
             PRAGMA foreign_keys = ON;
             "#,
         )?;
+    }
+
+    // Migration : les schémas antérieurs à `project_tokens` stockaient un
+    // `git_token` dans la table projects (un token par projet). Les tokens
+    // sont maintenant liés au couple (projet, utilisateur) : les tokens
+    // existants non vides sont associés à l'unique (plus ancien) utilisateur
+    // de la BDD, puis la colonne est retirée de `projects`.
+    let projects_sql2 = conn
+        .query_row(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'projects'",
+            [],
+            |r| r.get::<_, String>(0),
+        )
+        .unwrap_or_default();
+    if projects_sql2.contains("git_token") {
+        let users_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM users", [], |r| r.get(0))
+            .unwrap_or(0);
+        let move_tokens = if users_count > 0 {
+            "INSERT OR IGNORE INTO project_tokens (project_id, user_id, token)
+             SELECT p.id, (SELECT u.id FROM users u ORDER BY u.id LIMIT 1), p.git_token
+             FROM projects p WHERE p.git_token != '';"
+        } else {
+            ""
+        };
+        conn.execute_batch(&format!(
+            r#"
+            PRAGMA foreign_keys = OFF;
+            BEGIN;
+            CREATE TABLE IF NOT EXISTS project_tokens (
+                project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+                user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                token      TEXT NOT NULL,
+                PRIMARY KEY (project_id, user_id)
+            );
+            {move_tokens}
+            CREATE TABLE projects_new (
+                id         INTEGER PRIMARY KEY,
+                name       TEXT NOT NULL,
+                git_repo   TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                UNIQUE (name)
+            );
+            INSERT INTO projects_new (id, name, git_repo, created_at)
+            SELECT id, name, git_repo, created_at FROM projects;
+            DROP TABLE projects;
+            ALTER TABLE projects_new RENAME TO projects;
+            COMMIT;
+            PRAGMA foreign_keys = ON;
+            "#,
+        ))?;
     }
     Ok(())
 }

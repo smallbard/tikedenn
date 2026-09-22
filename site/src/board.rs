@@ -50,7 +50,8 @@ pub struct ProjectRow {
     pub id: i64,
     pub name: String,
     pub git_repo: String,
-    /// Token optionnel (dépôt privé en https) ; jamais affiché dans l'UI.
+    /// Token optionnel (dépôt privé en https) pour l'utilisateur courant ;
+    /// jamais affiché dans l'UI.
     pub token: String,
 }
 
@@ -97,13 +98,16 @@ pub struct Column {
     pub cards_html: String,
 }
 
-// Projets partagés : pas de filtre par utilisateur.
-fn fetch_projects(conn: &rusqlite::Connection) -> Vec<ProjectRow> {
+// Projets partagés : pas de filtre par utilisateur ; en revanche le token
+// renvoyé est celui du couple (projet, utilisateur courant).
+fn fetch_projects(conn: &rusqlite::Connection, user_id: i64) -> Vec<ProjectRow> {
     let mut out = vec![];
     if let Ok(mut st) = conn.prepare(
-        "SELECT id, name, git_repo, git_token FROM projects ORDER BY name COLLATE NOCASE",
+        "SELECT p.id, p.name, p.git_repo,
+                COALESCE((SELECT t.token FROM project_tokens t WHERE t.project_id = p.id AND t.user_id = ?1), '')
+         FROM projects p ORDER BY p.name COLLATE NOCASE",
     ) {
-        if let Ok(rows) = st.query_map([], |r| {
+        if let Ok(rows) = st.query_map([user_id], |r| {
             Ok(ProjectRow {
                 id: r.get(0)?,
                 name: r.get(1)?,
@@ -188,13 +192,16 @@ fn fetch_files_for_board(
 }
 
 /// Colonnes communes à `fetch_tasks` et `fetch_one_task` (lues par `task_from_row`).
-const TASK_SELECT: &str = "SELECT t.id, t.project_id, p.id, p.name, p.git_repo, p.git_token, t.status, t.branch, t.title,
+/// ?3 = user_id : le token (col 5) vient de `project_tokens`, c'est le token
+/// de l'utilisateur courant pour le projet de la tâche.
+const TASK_SELECT: &str = "SELECT t.id, t.project_id, p.id, p.name, p.git_repo, COALESCE(pt.token, ''), t.status, t.branch, t.title,
                                   t.description, t.created_at
-                           FROM tasks t LEFT JOIN projects p ON p.id = t.project_id";
+                           FROM tasks t LEFT JOIN projects p ON p.id = t.project_id
+                           LEFT JOIN project_tokens pt ON pt.project_id = p.id AND pt.user_id = ?3";
 
 /// Construit une `TaskRow` (sans ses fichiers) depuis une ligne de `TASK_SELECT`.
 fn task_from_row(r: &rusqlite::Row) -> rusqlite::Result<TaskRow> {
-    // Colonnes : 0=t.id, 1=t.project_id, 2=p.id, 3=p.name, 4=p.git_repo, 5=p.git_token,
+    // Colonnes : 0=t.id, 1=t.project_id, 2=p.id, 3=p.name, 4=p.git_repo, 5=pt.token,
     //           6=t.status, 7=t.branch, 8=t.title, 9=t.description, 10=t.created_at
     let desc: String = r.get(9)?;
     Ok(TaskRow {
@@ -231,7 +238,7 @@ fn fetch_tasks(conn: &rusqlite::Connection, user_id: i64, project_id: Option<i64
         Ok(s) => s,
         Err(_) => return out,
     };
-    let rows = match st.query_map(rusqlite::params![user_id, project_id], task_from_row) {
+    let rows = match st.query_map(rusqlite::params![user_id, project_id, user_id], task_from_row) {
         Ok(r) => r,
         Err(_) => return out,
     };
@@ -252,7 +259,7 @@ fn fetch_one_task(
     id: i64,
 ) -> rusqlite::Result<Option<TaskRow>> {
     let sql = format!("{TASK_SELECT} WHERE t.user_id = ?1 AND t.id = ?2");
-    match conn.query_row(&sql, rusqlite::params![user_id, id], task_from_row) {
+    match conn.query_row(&sql, rusqlite::params![user_id, id, user_id], task_from_row) {
         Ok(mut t) => {
             t.files = fetch_files(conn, t.id);
             Ok(Some(t))
@@ -270,7 +277,7 @@ fn build_board(
     selected: i64,
 ) -> (Vec<ProjectRow>, Vec<Column>) {
     let conn = state.db.get().expect("pool db");
-    let projects = fetch_projects(&conn);
+    let projects = fetch_projects(&conn, user.id);
     let filter = if selected > 0 && projects.iter().any(|p| p.id == selected) {
         Some(selected)
     } else {
@@ -347,7 +354,7 @@ pub async fn new_task_page(
 ) -> Response {
     let selected = q.project.unwrap_or(0);
     let conn = state.db.get().expect("pool db");
-    let projects = fetch_projects(&conn);
+    let projects = fetch_projects(&conn, user.id);
     auth::render(&TaskNewTemplate {
         user: Some(user),
         projects,
@@ -385,7 +392,7 @@ pub async fn edit_task_page(
                 .into_response()
         }
     };
-    let projects = fetch_projects(&conn);
+    let projects = fetch_projects(&conn, user.id);
     let statuses = status_choices();
     auth::render(&TaskEditTemplate {
         user: Some(user),
@@ -832,7 +839,8 @@ pub struct ProjectItemRow {
     pub name: String,
     pub git_repo: String,
     pub tasks: i64,
-    /// Un token est configuré pour ce dépôt (indicateur, jamais affiché en clair).
+    /// Un token est configuré pour ce dépôt par l'utilisateur courant
+    /// (indicateur, jamais affiché en clair).
     pub has_token: bool,
 }
 
@@ -854,10 +862,11 @@ pub async fn projects_page(
     if let Ok(mut st) = conn.prepare(
         "SELECT p.id, p.name, p.git_repo,
                 (SELECT COUNT(*) FROM tasks t WHERE t.project_id = p.id),
-                (p.git_token != '')
+                (EXISTS (SELECT 1 FROM project_tokens t
+                         WHERE t.project_id = p.id AND t.user_id = ?1))
          FROM projects p ORDER BY p.name COLLATE NOCASE",
     ) {
-        if let Ok(rows) = st.query_map([], |r| {
+        if let Ok(rows) = st.query_map([user.id], |r| {
             Ok(ProjectItemRow {
                 id: r.get(0)?,
                 name: r.get(1)?,
@@ -940,6 +949,7 @@ fn projects_error(msg: &str) -> Response {
 /// protégée par le middleware `require_auth`).
 pub async fn create_project(
     State(state): State<AppState>,
+    Extension(user): Extension<CurrentUser>,
     Form(f): Form<ProjectForm>,
 ) -> Response {
     let name = f.name.trim().to_string();
@@ -949,18 +959,30 @@ pub async fn create_project(
         return projects_error(msg);
     }
     let conn = state.db.get().expect("pool db");
-    if let Err(e) = conn.execute(
-        "INSERT INTO projects (name, git_repo, git_token) VALUES (?1, ?2, ?3)",
-        rusqlite::params![name, repo, token],
+    match conn.execute(
+        "INSERT INTO projects (name, git_repo) VALUES (?1, ?2)",
+        rusqlite::params![name, repo],
     ) {
-        return projects_error(project_write_error(&e));
+        Err(e) => return projects_error(project_write_error(&e)),
+        Ok(_) => {
+            // Token (si fourni) : stocké pour le couple (projet, utilisateur
+            // courant) — chaque utilisateur a son propre token.
+            if !token.is_empty() {
+                let _ = conn.execute(
+                    "INSERT OR REPLACE INTO project_tokens (project_id, user_id, token)
+                     VALUES (?1, ?2, ?3)",
+                    rusqlite::params![conn.last_insert_rowid(), user.id, token],
+                );
+            }
+        }
     }
     Redirect::to("/projects").into_response()
 }
 
-/// Met à jour un projet (nom, dépôt git, token).
+/// Met à jour un projet (nom, dépôt git) et le token de l'appelant.
 pub async fn update_project(
     State(state): State<AppState>,
+    Extension(user): Extension<CurrentUser>,
     Path(id): Path<i64>,
     Form(f): Form<ProjectForm>,
 ) -> Response {
@@ -971,28 +993,27 @@ pub async fn update_project(
         return projects_error(msg);
     }
     let conn = state.db.get().expect("pool db");
-    // Token vide dans le formulaire : on conserve le token déjà stocké
-    // (l'UI ne le ré-affiche jamais).
-    let token = if form_token.is_empty() {
-        conn.query_row(
-            "SELECT git_token FROM projects WHERE id = ?1",
-            [id],
-            |r| r.get::<_, String>(0),
-        )
-        .unwrap_or_default()
-    } else {
-        form_token.to_string()
-    };
     if let Err(e) = conn.execute(
-        "UPDATE projects SET name = ?1, git_repo = ?2, git_token = ?3 WHERE id = ?4",
-        rusqlite::params![name, repo, token, id],
+        "UPDATE projects SET name = ?1, git_repo = ?2 WHERE id = ?3",
+        rusqlite::params![name, repo, id],
     ) {
         return projects_error(project_write_error(&e));
+    }
+    // Token : le formulaire en contient un → on met à jour le token de
+    // l'utilisateur courant pour ce projet ; vide → on conserve le token
+    // déjà stocké (l'UI ne le ré-affiche jamais).
+    if !form_token.is_empty() {
+        let _ = conn.execute(
+            "INSERT OR REPLACE INTO project_tokens (project_id, user_id, token)
+             VALUES (?1, ?2, ?3)",
+            rusqlite::params![id, user.id, form_token.to_string()],
+        );
     }
     Redirect::to("/projects").into_response()
 }
 
-/// Supprime un projet (ses tâches sont conservées, sans projet).
+/// Supprime un projet (ses tâches sont conservées, sans projet ; ses tokens
+/// sont supprimés en cascade).
 pub async fn delete_project(
     State(state): State<AppState>,
     Path(id): Path<i64>,

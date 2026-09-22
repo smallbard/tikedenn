@@ -24,8 +24,9 @@ architecturellement sur `../Lotr/site`.
 - **htmx** n'est utilisé que pour la suppression d'un fichier joint sur la
   page d'édition ; le reste de l'app est en HTML classique avec
   redirections (form POST + 303).
-- Déploiement sur le VPS (même machine que LotR) : voir `site/publish.sh`
-  et `site/deploy/` (service systemd + vhost nginx).
+- Déploiement sur le VPS (même machine que LotR) : via le dépôt privé
+  `Publish` (`publish tikedenn`) ; `site/deploy/` contient le service systemd
+  et le vhost nginx.
 
 ## Développement
 
@@ -35,10 +36,14 @@ cd site && cargo run   # http://127.0.0.1:3002 (BDD site/app.sqlite, auto-migré
 
 ## Publication
 
+Les coordonnées SSH du VPS ne sont pas dans ce dépôt : elles viennent du
+`vps.conf` du dépôt privé `Publish` (attendu à côté de celui-ci), ou des
+variables d'environnement `VPS_HOST` / `VPS_PORT`.
+
 ```sh
-./site/deploy/setup-vps.sh   # une seule fois (systemd + nginx + certbot)
-./site/publish.sh            # build musl + déploiement + vérification de santé
+CERTBOT_EMAIL=... ./site/deploy/setup-vps.sh   # une seule fois (systemd + nginx + certbot)
+publish tikedenn                               # build musl + déploiement + vérification de santé
 ```
 
-Options : `--skip-build`, `--skip-upload`, `--download-db`.
+Options de `publish` : `--skip-build`, `--skip-upload`, `--dry-run`, `--download-db`.
 La BDD de prod n'est jamais écrasée par le déploiement.

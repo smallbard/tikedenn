@@ -6,3 +6,4 @@ site/secret.key
 *.sqlite
 *.sqlite
 *.sqlite-*
+/tikedenn.db

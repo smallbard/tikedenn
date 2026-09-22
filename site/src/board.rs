@@ -97,12 +97,13 @@ pub struct Column {
     pub cards_html: String,
 }
 
-fn fetch_projects(conn: &rusqlite::Connection, user_id: i64) -> Vec<ProjectRow> {
+// Projets partagés : pas de filtre par utilisateur.
+fn fetch_projects(conn: &rusqlite::Connection) -> Vec<ProjectRow> {
     let mut out = vec![];
     if let Ok(mut st) = conn.prepare(
-        "SELECT id, name, git_repo, git_token FROM projects WHERE user_id = ?1 ORDER BY name COLLATE NOCASE",
+        "SELECT id, name, git_repo, git_token FROM projects ORDER BY name COLLATE NOCASE",
     ) {
-        if let Ok(rows) = st.query_map([user_id], |r| {
+        if let Ok(rows) = st.query_map([], |r| {
             Ok(ProjectRow {
                 id: r.get(0)?,
                 name: r.get(1)?,
@@ -269,7 +270,7 @@ fn build_board(
     selected: i64,
 ) -> (Vec<ProjectRow>, Vec<Column>) {
     let conn = state.db.get().expect("pool db");
-    let projects = fetch_projects(&conn, user.id);
+    let projects = fetch_projects(&conn);
     let filter = if selected > 0 && projects.iter().any(|p| p.id == selected) {
         Some(selected)
     } else {
@@ -346,7 +347,7 @@ pub async fn new_task_page(
 ) -> Response {
     let selected = q.project.unwrap_or(0);
     let conn = state.db.get().expect("pool db");
-    let projects = fetch_projects(&conn, user.id);
+    let projects = fetch_projects(&conn);
     auth::render(&TaskNewTemplate {
         user: Some(user),
         projects,
@@ -384,7 +385,7 @@ pub async fn edit_task_page(
                 .into_response()
         }
     };
-    let projects = fetch_projects(&conn, user.id);
+    let projects = fetch_projects(&conn);
     let statuses = status_choices();
     auth::render(&TaskEditTemplate {
         user: Some(user),
@@ -504,8 +505,8 @@ pub async fn create_task(
     let project_id: Option<i64> = if f.project > 0 {
         let conn = state.db.get().expect("pool db");
         match conn.query_row(
-            "SELECT id FROM projects WHERE id = ?1 AND user_id = ?2",
-            rusqlite::params![f.project, user.id],
+            "SELECT id FROM projects WHERE id = ?1",
+            [f.project],
             |r| r.get(0),
         ) {
             Ok(id) => Some(id),
@@ -579,8 +580,8 @@ pub async fn update_task(
     let project_id: Option<i64> = if f.project > 0 {
         let conn = state.db.get().expect("pool db");
         match conn.query_row(
-            "SELECT id FROM projects WHERE id = ?1 AND user_id = ?2",
-            rusqlite::params![f.project, user.id],
+            "SELECT id FROM projects WHERE id = ?1",
+            [f.project],
             |r| r.get(0),
         ) {
             Ok(p) => Some(p),
@@ -854,9 +855,9 @@ pub async fn projects_page(
         "SELECT p.id, p.name, p.git_repo,
                 (SELECT COUNT(*) FROM tasks t WHERE t.project_id = p.id),
                 (p.git_token != '')
-         FROM projects p WHERE p.user_id = ?1 ORDER BY p.name COLLATE NOCASE",
+         FROM projects p ORDER BY p.name COLLATE NOCASE",
     ) {
-        if let Ok(rows) = st.query_map([user.id], |r| {
+        if let Ok(rows) = st.query_map([], |r| {
             Ok(ProjectItemRow {
                 id: r.get(0)?,
                 name: r.get(1)?,
@@ -935,10 +936,10 @@ fn projects_error(msg: &str) -> Response {
     Redirect::to(&format!("/projects?error={q}")).into_response()
 }
 
-/// Crée un projet.
+/// Crée un projet (partagé par tous les utilisateurs ; la page reste
+/// protégée par le middleware `require_auth`).
 pub async fn create_project(
     State(state): State<AppState>,
-    Extension(user): Extension<CurrentUser>,
     Form(f): Form<ProjectForm>,
 ) -> Response {
     let name = f.name.trim().to_string();
@@ -949,18 +950,17 @@ pub async fn create_project(
     }
     let conn = state.db.get().expect("pool db");
     if let Err(e) = conn.execute(
-        "INSERT INTO projects (user_id, name, git_repo, git_token) VALUES (?1, ?2, ?3, ?4)",
-        rusqlite::params![user.id, name, repo, token],
+        "INSERT INTO projects (name, git_repo, git_token) VALUES (?1, ?2, ?3)",
+        rusqlite::params![name, repo, token],
     ) {
         return projects_error(project_write_error(&e));
     }
     Redirect::to("/projects").into_response()
 }
 
-/// Met à jour un projet (nom, dépôt git).
+/// Met à jour un projet (nom, dépôt git, token).
 pub async fn update_project(
     State(state): State<AppState>,
-    Extension(user): Extension<CurrentUser>,
     Path(id): Path<i64>,
     Form(f): Form<ProjectForm>,
 ) -> Response {
@@ -975,8 +975,8 @@ pub async fn update_project(
     // (l'UI ne le ré-affiche jamais).
     let token = if form_token.is_empty() {
         conn.query_row(
-            "SELECT git_token FROM projects WHERE id = ?1 AND user_id = ?2",
-            rusqlite::params![id, user.id],
+            "SELECT git_token FROM projects WHERE id = ?1",
+            [id],
             |r| r.get::<_, String>(0),
         )
         .unwrap_or_default()
@@ -984,8 +984,8 @@ pub async fn update_project(
         form_token.to_string()
     };
     if let Err(e) = conn.execute(
-        "UPDATE projects SET name = ?1, git_repo = ?2, git_token = ?3 WHERE id = ?4 AND user_id = ?5",
-        rusqlite::params![name, repo, token, id, user.id],
+        "UPDATE projects SET name = ?1, git_repo = ?2, git_token = ?3 WHERE id = ?4",
+        rusqlite::params![name, repo, token, id],
     ) {
         return projects_error(project_write_error(&e));
     }
@@ -995,18 +995,16 @@ pub async fn update_project(
 /// Supprime un projet (ses tâches sont conservées, sans projet).
 pub async fn delete_project(
     State(state): State<AppState>,
-    Extension(user): Extension<CurrentUser>,
     Path(id): Path<i64>,
 ) -> Response {
+    // Projet partagé : les tâches de TOUS les utilisateurs qui y référençaient
+    // sont conservées, sans projet.
     if let Ok(conn) = state.db.get() {
         let _ = conn.execute(
-            "UPDATE tasks SET project_id = NULL WHERE project_id = ?1 AND user_id = ?2",
-            rusqlite::params![id, user.id],
+            "UPDATE tasks SET project_id = NULL WHERE project_id = ?1",
+            [id],
         );
-        let _ = conn.execute(
-            "DELETE FROM projects WHERE id = ?1 AND user_id = ?2",
-            rusqlite::params![id, user.id],
-        );
+        let _ = conn.execute("DELETE FROM projects WHERE id = ?1", [id]);
     }
     Redirect::to("/projects").into_response()
 }

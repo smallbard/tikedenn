@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Projects — Tikedenn{% endblock %}
 {% block content %}
-<h1>Projects</h1>
+<h1>Projects <small style="font-weight:normal">(shared by all users)</small></h1>
 {% if let Some(e) = error %}<p class="error">{{ e }}</p>{% endif %}
 
 <form method="post" action="/projects" class="rowform new-project">
@@ -12,7 +12,7 @@
 </form>
 
 {% if projects.is_empty() %}
-<p class="empty">No project yet. Projects group tasks and link to a git repository.</p>
+<p class="empty">No project yet. Projects are shared by all users; they group tasks on the board and link to a git repository.</p>
 {% else %}
 <div class="projects">
   {% for p in projects %}

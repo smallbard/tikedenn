@@ -16,16 +16,16 @@ pub fn init_app_schema(conn: &Connection) -> anyhow::Result<()> {
         );
 
         -- Un projet regroupe des tâches et référence un dépôt git.
-        -- `git_token` : token optionnel pour les dépôts privés en https
-        -- (authentification du clone lors du calcul du diff branche).
+        -- Partagé entre TOUS les utilisateurs (pas de user_id) ; le nom est
+        -- unique globalement. `git_token` : token optionnel pour les dépôts
+        -- privés en https (authentification du clone lors du diff branche).
         CREATE TABLE IF NOT EXISTS projects (
             id         INTEGER PRIMARY KEY,
-            user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
             name       TEXT NOT NULL,
             git_repo   TEXT NOT NULL DEFAULT '',
             git_token  TEXT NOT NULL DEFAULT '',
             created_at TEXT NOT NULL DEFAULT (datetime('now')),
-            UNIQUE (user_id, name)
+            UNIQUE (name)
         );
 
         -- Tâches du tableau kanban : draft → todo → progress → review → deploy → done.
@@ -137,6 +137,49 @@ pub fn init_app_schema(conn: &Connection) -> anyhow::Result<()> {
             "ALTER TABLE projects ADD COLUMN git_token TEXT NOT NULL DEFAULT ''",
             [],
         );
+    }
+
+    // Migration : les schémas antérieurs donnaient aux projets un `user_id`
+    // (un projet par utilisateur). Les projets sont maintenant partagés par
+    // tous : on reconstruit la table sans `user_id`. En cas de doublons de
+    // nom entre utilisateurs, on garde le projet de plus petit id et on
+    // redirige vers lui les tâches qui référençaient le doublon éliminé.
+    let projects_sql = conn
+        .query_row(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'projects'",
+            [],
+            |r| r.get::<_, String>(0),
+        )
+        .unwrap_or_default();
+    if projects_sql.contains("user_id") {
+        conn.execute_batch(
+            r#"
+            PRAGMA foreign_keys = OFF;
+            BEGIN;
+            CREATE TABLE projects_new (
+                id         INTEGER PRIMARY KEY,
+                name       TEXT NOT NULL,
+                git_repo   TEXT NOT NULL DEFAULT '',
+                git_token  TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                UNIQUE (name)
+            );
+            -- Tâches qui référençaient un doublon : redirection vers le survivant.
+            UPDATE tasks SET project_id = (
+                SELECT MIN(p.id) FROM projects p WHERE p.name = (
+                    SELECT p2.name FROM projects p2 WHERE p2.id = tasks.project_id
+                )
+            );
+            INSERT INTO projects_new (id, name, git_repo, git_token, created_at)
+            SELECT p.id, p.name, p.git_repo, p.git_token, p.created_at
+            FROM projects p
+            WHERE p.id = (SELECT MIN(p2.id) FROM projects p2 WHERE p2.name = p.name);
+            DROP TABLE projects;
+            ALTER TABLE projects_new RENAME TO projects;
+            COMMIT;
+            PRAGMA foreign_keys = ON;
+            "#,
+        )?;
     }
     Ok(())
 }

@@ -1,3 +1,4 @@
+use crate::web::render;
 use crate::AppState;
 use argon2::{
     password_hash::{rand_core::OsRng, PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
@@ -6,22 +7,11 @@ use argon2::{
 use askama::Template;
 use axum::{
     extract::{Query, State},
-    response::{Html, IntoResponse, Redirect, Response},
+    response::{IntoResponse, Redirect, Response},
     Form,
 };
 use axum_extra::extract::cookie::{Cookie, SameSite, SignedCookieJar};
 use serde::Deserialize;
-
-pub fn render<T: Template>(t: &T) -> Response {
-    match t.render() {
-        Ok(html) => Html(html).into_response(),
-        Err(e) => (
-            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-            format!("template error: {e}"),
-        )
-            .into_response(),
-    }
-}
 
 #[derive(Clone)]
 pub struct CurrentUser {
@@ -41,7 +31,7 @@ pub fn current_user(state: &AppState, jar: &SignedCookieJar) -> Option<CurrentUs
             Ok(CurrentUser {
                 id: r.get(0)?,
                 username: r.get(1)?,
-                is_admin: r.get::<_, i32>(2)? != 0,
+                is_admin: r.get(2)?,
             })
         },
     )
@@ -232,4 +222,19 @@ pub async fn login(
 pub async fn logout(jar: SignedCookieJar) -> Response {
     let jar = jar.remove(Cookie::from("uid"));
     (jar, Redirect::to("/login")).into_response()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_local_paths_are_accepted_as_redirect_targets() {
+        assert!(is_local_path("/dashboard"));
+        assert!(is_local_path("/tasks/new?project=3"));
+        assert!(!is_local_path("//evil.com"));
+        assert!(!is_local_path("/\\evil.com"));
+        assert!(!is_local_path("https://evil.com"));
+        assert!(!is_local_path(""));
+    }
 }

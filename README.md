@@ -5,16 +5,17 @@ architecturellement sur `../Lotr/site`.
 
 - **Accès réservé aux utilisateurs inscrits** : tout est protégé par une
   authentification (connexion, cookie de session signé, hachage Argon2).
-  Seul `/login` (et `/logout`) est public ; la route d'inscription est
-  désactivée (commentée dans `main.rs`) — la BDD de prod se gère en direct
-  si besoin.
+  Seuls la page de présentation (`/`), `/login` et `/logout` sont publics ;
+  l'inscription (`/register`) est ouverte sauf si `REGISTRATION=0` (cas de
+  la prod).
 - **Administration** : au tout premier démarrage, un compte `admin` est créé
   avec un mot de passe aléatoire affiché dans la console (journal systemd en
   production). `/admin/users` (réservé aux admins) permet de réinitialiser les
   mots de passe et de supprimer des utilisateurs.
 - **Fonctionnalité principale : un tableau Kanban par utilisateur**
-  (états `draft → todo → progress → done`), avec des **projets**
-  (associés aux tâches, champ repo git optionnel), des descriptions
+  (états `draft → todo → progress → review → deploy → done`), avec des **projets**
+  (partagés par tous les utilisateurs, repo git optionnel et token git
+  personnel), une branche git optionnelle par tâche (page de diff vs main), des descriptions
   longues et des **pièces jointes** (stockées en BLOB dans SQLite, 10 Mo
   max). Le tableau est filtrable par projet. Les cartes sont minimales
   (titre, projet, début de description) : la création se fait depuis une
@@ -31,7 +32,8 @@ architecturellement sur `../Lotr/site`.
 ## Développement
 
 ```sh
-cd site && cargo run   # http://127.0.0.1:3002 (BDD site/app.sqlite, auto-migrée)
+cd site && cargo run   # http://127.0.0.1:3003 (BDD site/app.sqlite, auto-migrée)
+cd site && cargo test  # tests unitaires (validation, migrations…)
 ```
 
 ## Publication

@@ -18,5 +18,5 @@
   </label>
   <button>{% if is_register %}Create account{% else %}Sign in{% endif %}</button>
 </form>
-<p>{% if is_register %}Already have an account? <a href="/login">Log in</a>{% else %}{% if std::env::var("REGISTRATION").unwrap_or_default() != "0" %}No account yet? <a href="/register">Sign up</a>{% endif %}{% endif %}</p>
+<p>{% if is_register %}Already have an account? <a href="/login">Log in</a>{% else %}{% if crate::util::registration_enabled() %}No account yet? <a href="/register">Sign up</a>{% endif %}{% endif %}</p>
 {% endblock %}

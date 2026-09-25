@@ -258,3 +258,68 @@ fn table_sql(conn: &Connection, table: &str) -> rusqlite::Result<String> {
         r => r,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn version(conn: &Connection) -> i64 {
+        conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap()
+    }
+
+    #[test]
+    fn fresh_schema_is_stable_across_restarts() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_app_schema(&conn).unwrap();
+        let ddl = table_sql(&conn, "projects").unwrap();
+        init_app_schema(&conn).unwrap();
+        assert_eq!(version(&conn), 2);
+        assert_eq!(table_sql(&conn, "projects").unwrap(), ddl);
+        assert!(!has_column(&conn, "projects", "git_token").unwrap());
+    }
+
+    #[test]
+    fn legacy_per_user_projects_are_merged() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT NOT NULL UNIQUE,
+                                 email TEXT NOT NULL UNIQUE, pass_hash TEXT NOT NULL,
+                                 created_at TEXT NOT NULL DEFAULT (datetime('now')));
+             CREATE TABLE projects (id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL,
+                                    name TEXT NOT NULL, git_repo TEXT NOT NULL DEFAULT '',
+                                    created_at TEXT NOT NULL DEFAULT (datetime('now')));
+             CREATE TABLE tasks (id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL,
+                                 project_id INTEGER, status TEXT NOT NULL DEFAULT 'draft'
+                                     CHECK (status IN ('draft','todo','progress','done')),
+                                 title TEXT NOT NULL, description TEXT NOT NULL DEFAULT '',
+                                 created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                                 updated_at TEXT NOT NULL DEFAULT (datetime('now')));
+             INSERT INTO users (username, email, pass_hash) VALUES ('a', 'a@x', 'h'), ('b', 'b@x', 'h');
+             INSERT INTO projects (user_id, name) VALUES (1, 'P'), (2, 'P'), (2, 'Q');
+             INSERT INTO tasks (user_id, project_id, title) VALUES (1, 1, 't1'), (2, 2, 't2'), (2, 3, 't3'), (9, 1, 'orphan');",
+        )
+        .unwrap();
+        init_app_schema(&conn).unwrap();
+        assert_eq!(version(&conn), 2);
+        assert!(has_column(&conn, "users", "is_admin").unwrap());
+        assert!(has_column(&conn, "tasks", "branch").unwrap());
+        assert!(table_sql(&conn, "tasks").unwrap().contains("'review'"));
+        let projects: Vec<(i64, String)> = conn
+            .prepare("SELECT id, name FROM projects ORDER BY id")
+            .unwrap()
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(projects, vec![(1, "P".into()), (3, "Q".into())]);
+        let tasks: Vec<(i64, Option<i64>)> = conn
+            .prepare("SELECT id, project_id FROM tasks ORDER BY id")
+            .unwrap()
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        // Doublon « P » redirigé vers le projet 1 ; tâche orpheline purgée.
+        assert_eq!(tasks, vec![(1, Some(1)), (2, Some(1)), (3, Some(3))]);
+    }
+}

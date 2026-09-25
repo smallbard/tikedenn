@@ -18,7 +18,7 @@
 {% include "board_frag.html" %}
 
 <!-- Drag & drop : glisser une carte sur une colonne change son état
-     (même endpoint POST /tasks/{id}/move que le select des cartes). -->
+     (POST /tasks/{id}/move). -->
 <script>
 (function () {
   var board = document.getElementById('board');

@@ -1,4 +1,4 @@
-<div class="card task t-{{ task.status }}" draggable="true" data-id="{{ task.id }}" data-filter="{{ filter }}">
+<div class="card task t-{{ task.status }}" draggable="true" data-id="{{ task.id }}" data-filter="{{ selected_project }}">
   <div class="card-head">
     <strong class="card-title grow">{{ task.title }}</strong>
     {% if let Some(p) = task.project %}
@@ -12,7 +12,7 @@
   <p class="card-desc">{{ task.description_preview }}</p>
   {% endif %}
   <div class="card-actions">
-    <a class="linklike" href="/tasks/{{ task.id }}/edit?project={{ filter }}">Edit</a>
+    <a class="linklike" href="/tasks/{{ task.id }}/edit?project={{ selected_project }}">Edit</a>
     {% if !task.branch.is_empty() %}<a class="linklike" href="/tasks/{{ task.id }}/diff">Diff</a>{% endif %}
   </div>
 </div>

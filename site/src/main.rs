@@ -2,7 +2,11 @@ mod admin;
 mod auth;
 mod board;
 mod db;
+mod files;
+mod git_diff;
+mod projects;
 mod util;
+mod web;
 
 use axum::{
     extract::{DefaultBodyLimit, Request, State},
@@ -14,15 +18,23 @@ use axum::{
 use axum_extra::extract::cookie::{Key, SignedCookieJar};
 use r2d2_sqlite::SqliteConnectionManager;
 use rand::RngCore;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tower_http::services::ServeDir;
 
 pub type Pool = r2d2::Pool<SqliteConnectionManager>;
+pub type Conn = r2d2::PooledConnection<SqliteConnectionManager>;
 
 #[derive(Clone)]
 pub struct AppState {
     pub db: Pool,
     pub key: Key,
+}
+
+impl AppState {
+    /// Connexion du pool ; l'échec (pool épuisé) devient une erreur 500.
+    pub fn conn(&self) -> Result<Conn, web::AppError> {
+        Ok(self.db.get()?)
+    }
 }
 
 impl axum::extract::FromRef<AppState> for Key {
@@ -37,7 +49,7 @@ fn env_or(name: &str, default: PathBuf) -> PathBuf {
 
 /// Charge la clé de signature des cookies ; elle est générée et persistée
 /// si le fichier n'existe pas (les sessions survivent ainsi aux redéploiements).
-fn load_key(path: &PathBuf) -> anyhow::Result<Key> {
+fn load_key(path: &Path) -> anyhow::Result<Key> {
     if let Ok(bytes) = std::fs::read(path) {
         if bytes.len() >= 64 {
             return Ok(Key::from(&bytes));
@@ -56,11 +68,10 @@ fn load_key(path: &PathBuf) -> anyhow::Result<Key> {
 async fn require_auth(
     State(state): State<AppState>,
     jar: SignedCookieJar,
-    req: Request,
+    mut req: Request,
     next: Next,
 ) -> Response {
     if let Some(u) = auth::current_user(&state, &jar) {
-        let mut req = req;
         req.extensions_mut().insert(u);
         return next.run(req).await;
     }
@@ -87,48 +98,51 @@ async fn main() -> anyhow::Result<()> {
     {
         let conn = pool.get()?;
         db::init_app_schema(&conn)?;
-        seed_default_admin(&conn);
+        seed_default_admin(&conn)?;
     }
 
     let state = AppState { db: pool, key };
 
     // REGISTRATION=0 désactive l'auto-inscription (routes /register) ;
-    // activée par défaut (utile pour le dev local). Les templates masquent
-    // les liens « Sign up » quand la variable vaut 0.
-    let registration_enabled =
-        std::env::var("REGISTRATION").unwrap_or_default() != "0";
+    // activée par défaut (utile pour le dev local).
     let mut public = Router::new()
         .route("/login", get(auth::login_form).post(auth::login))
         .route("/logout", post(auth::logout))
         .nest_service("/static", ServeDir::new(static_dir));
-    if registration_enabled {
+    if util::registration_enabled() {
         public = public.route(
             "/register",
             get(auth::register_form).post(auth::register),
         );
     }
 
-    // Zone protégée : seule l'accueil (/) décide entre connexion et tableau
-    // de bord, tout le reste est derrière require_auth.
-    // 11 Mo : fichier de 10 Mo + overhead multipart (axum limite à 2 Mo par défaut).
-    let protected = Router::new()
-        .route("/dashboard", get(board::dashboard))
-        .route("/projects", get(board::projects_page).post(board::create_project))
-        .route("/projects/{id}", post(board::update_project))
-        .route("/projects/{id}/delete", post(board::delete_project))
-        .route("/tasks", post(board::create_task))
-        .route("/tasks/new", get(board::new_task_page))
-        .route("/tasks/{id}/edit", get(board::edit_task_page))
-        .route("/tasks/{id}/diff", get(board::task_diff_page))
-        .route("/tasks/{id}", post(board::update_task))
-        .route("/tasks/{id}/move", post(board::move_task))
-        .route("/tasks/{id}/delete", post(board::delete_task))
-        .route("/tasks/{id}/files", post(board::upload_file))
-        .route("/files/{id}", get(board::download_file))
-        .route("/files/{id}/delete", post(board::delete_file))
+    // Zone admin : 404 pour les non-admins (require_admin), en plus de
+    // l'authentification appliquée à toute la zone protégée.
+    let admin = Router::new()
         .route("/admin/users", get(admin::users))
         .route("/admin/users/{id}/delete", post(admin::delete_user))
         .route("/admin/users/{id}/password", post(admin::set_password))
+        .route_layer(middleware::from_fn(admin::require_admin));
+
+    // Zone protégée : seule l'accueil (/) décide entre présentation et
+    // tableau de bord, tout le reste est derrière require_auth.
+    // 11 Mo : fichier de 10 Mo + overhead multipart (axum limite à 2 Mo par défaut).
+    let protected = Router::new()
+        .route("/dashboard", get(board::dashboard))
+        .route("/projects", get(projects::projects_page).post(projects::create_project))
+        .route("/projects/{id}", post(projects::update_project))
+        .route("/projects/{id}/delete", post(projects::delete_project))
+        .route("/tasks", post(board::create_task))
+        .route("/tasks/new", get(board::new_task_page))
+        .route("/tasks/{id}/edit", get(board::edit_task_page))
+        .route("/tasks/{id}/diff", get(git_diff::task_diff_page))
+        .route("/tasks/{id}", post(board::update_task))
+        .route("/tasks/{id}/move", post(board::move_task))
+        .route("/tasks/{id}/delete", post(board::delete_task))
+        .route("/tasks/{id}/files", post(files::upload_file))
+        .route("/files/{id}", get(files::download_file))
+        .route("/files/{id}/delete", post(files::delete_file))
+        .merge(admin)
         .route_layer(middleware::from_fn_with_state(
             state.clone(),
             require_auth,
@@ -141,7 +155,7 @@ async fn main() -> anyhow::Result<()> {
         .merge(protected)
         .with_state(state);
 
-    let addr = std::env::var("BIND").unwrap_or_else(|_| "127.0.0.1:3002".into());
+    let addr = std::env::var("BIND").unwrap_or_else(|_| "127.0.0.1:3003".into());
     println!("Tikedenn on http://{addr}");
     let listener = tokio::net::TcpListener::bind(&addr).await?;
     axum::serve(listener, router).await?;
@@ -151,45 +165,34 @@ async fn main() -> anyhow::Result<()> {
 /// Au tout premier lancement (aucun compte), crée un compte administrateur
 /// par défaut avec un mot de passe aléatoire affiché dans la console
 /// (journal systemd en production). À changer ensuite depuis /admin/users.
-fn seed_default_admin(conn: &rusqlite::Connection) {
-    let count: i64 = match conn.query_row("SELECT COUNT(*) FROM users", [], |r| r.get(0)) {
-        Ok(n) => n,
-        Err(_) => return,
-    };
+fn seed_default_admin(conn: &rusqlite::Connection) -> anyhow::Result<()> {
+    let count: i64 = conn.query_row("SELECT COUNT(*) FROM users", [], |r| r.get(0))?;
     if count != 0 {
-        return;
+        return Ok(());
     }
     let mut bytes = [0u8; 8];
     rand::thread_rng().fill_bytes(&mut bytes);
     let password: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
-    let Some(hash) = auth::hash_password(&password) else {
-        return;
-    };
-    if conn
-        .execute(
-            "INSERT INTO users (username, email, pass_hash, is_admin) VALUES ('admin', 'olivier.leguyader@smallbard.com', ?1, 1)",
-            [&hash],
-        )
-        .is_ok()
-    {
-        eprintln!(
-            "[tikedenn] Default admin account created — username: \"admin\", password: \"{password}\". Change it from /admin/users after logging in."
-        );
-    }
+    let hash = auth::hash_password(&password)
+        .ok_or_else(|| anyhow::anyhow!("could not hash the admin password"))?;
+    conn.execute(
+        "INSERT INTO users (username, email, pass_hash, is_admin) VALUES ('admin', 'admin@localhost', ?1, 1)",
+        [&hash],
+    )?;
+    eprintln!(
+        "[tikedenn] Default admin account created — username: \"admin\", password: \"{password}\". Change it from /admin/users after logging in."
+    );
+    Ok(())
 }
 
 /// Racine : tableau de bord si connecté, page de présentation sinon.
-async fn index(
-    State(state): State<AppState>,
-    jar: SignedCookieJar,
-) -> Response {
+async fn index(State(state): State<AppState>, jar: SignedCookieJar) -> Response {
     if auth::current_user(&state, &jar).is_some() {
         Redirect::to("/dashboard").into_response()
     } else {
-        let registration_enabled = std::env::var("REGISTRATION").unwrap_or_default() != "0";
-        auth::render(&auth::LandingTemplate {
+        web::render(&auth::LandingTemplate {
             user: None,
-            registration_enabled,
+            registration_enabled: util::registration_enabled(),
         })
     }
 }

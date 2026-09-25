@@ -10,7 +10,7 @@
     <td>{{ u.username }}{% if u.is_admin %} <small>(admin)</small>{% endif %}{% if u.is_self %} <small>(you)</small>{% endif %}</td>
     <td>{{ u.email }}</td>
     <td>{{ u.created_at }}</td>
-    <td>{{ u.notes }}</td>
+    <td>{{ u.tasks }}</td>
     <td>
       <form method="post" action="/admin/users/{{ u.id }}/password" class="rowform">
         <input name="password" type="password" placeholder="New password" minlength="8" required>
@@ -19,7 +19,7 @@
     </td>
     <td>
       {% if !u.is_self %}
-      <form method="post" action="/admin/users/{{ u.id }}/delete" onsubmit="return confirm('Delete this user? All of their data (projects, tasks, files) will be lost.')">
+      <form method="post" action="/admin/users/{{ u.id }}/delete" onsubmit="return confirm('Delete this user? All of their data (tasks, files, git tokens) will be lost.')">
         <button class="linklike danger">Delete</button>
       </form>
       {% endif %}

@@ -67,30 +67,47 @@ pub fn init_app_schema(conn: &Connection) -> anyhow::Result<()> {
         "#,
     )?;
 
+    // Migrations versionnées (PRAGMA user_version) : chaque étape ne
+    // s'exécute qu'une fois. Ajouter les suivantes en `if version < N`.
+    let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
+    if version < 1 {
+        migrate_legacy(conn)?;
+        conn.execute_batch("PRAGMA user_version = 1;")?;
+    }
+    if version < 2 {
+        // Les cascades n'étaient pas appliquées (foreign_keys n'était actif
+        // que sur une connexion du pool) : purge des lignes orphelines.
+        conn.execute_batch(
+            r#"
+            BEGIN;
+            DELETE FROM tasks WHERE user_id NOT IN (SELECT id FROM users);
+            UPDATE tasks SET project_id = NULL
+                WHERE project_id IS NOT NULL AND project_id NOT IN (SELECT id FROM projects);
+            DELETE FROM files WHERE task_id NOT IN (SELECT id FROM tasks);
+            DELETE FROM project_tokens
+                WHERE project_id NOT IN (SELECT id FROM projects)
+                   OR user_id NOT IN (SELECT id FROM users);
+            PRAGMA user_version = 2;
+            COMMIT;
+            "#,
+        )?;
+    }
+    Ok(())
+}
+
+/// Migrations historiques (schémas antérieurs à `user_version`), détectées
+/// d'après le schéma existant. Sans effet sur une base neuve ou à jour.
+fn migrate_legacy(conn: &Connection) -> anyhow::Result<()> {
     // Migration légère : ajouter is_admin aux schémas locaux antérieurs.
-    let has_col = conn
-        .prepare("PRAGMA table_info(users)")
-        .and_then(|mut st| {
-            st.query_map([], |r| r.get::<_, String>(1))
-                .map(|it| it.flatten().any(|n| n == "is_admin"))
-        })
-        .unwrap_or(true);
-    if !has_col {
-        let _ = conn.execute("ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0", []);
+    if !has_column(conn, "users", "is_admin")? {
+        conn.execute("ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0", [])?;
     }
 
     // Migration : schémas antérieurs ont une CHECK restreinte à
     // draft/todo/progress/done (pas de 'review' ni 'deploy'). Le CREATE TABLE
     // IF NOT EXISTS ne peut pas la mettre à jour : on reconstruit la table
     // (copie des données) si la contrainte est ancienne.
-    let tasks_sql = conn
-        .query_row(
-            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'tasks'",
-            [],
-            |r| r.get::<_, String>(0),
-        )
-        .unwrap_or_default();
-    if !tasks_sql.contains("'review'") && !tasks_sql.is_empty() {
+    if !table_sql(conn, "tasks")?.contains("'review'") {
         conn.execute_batch(
             r#"
             PRAGMA foreign_keys = OFF;
@@ -121,31 +138,19 @@ pub fn init_app_schema(conn: &Connection) -> anyhow::Result<()> {
 
     // Migration : schémas antérieurs à la colonne `branch` (branche git
     // optionnelle liée à la tâche).
-    let has_branch = conn
-        .prepare("PRAGMA table_info(tasks)")
-        .and_then(|mut st| {
-            st.query_map([], |r| r.get::<_, String>(1))
-                .map(|it| it.flatten().any(|n| n == "branch"))
-        })
-        .unwrap_or(true);
-    if !has_branch {
-        let _ = conn.execute("ALTER TABLE tasks ADD COLUMN branch TEXT NOT NULL DEFAULT ''", []);
+    if !has_column(conn, "tasks", "branch")? {
+        conn.execute("ALTER TABLE tasks ADD COLUMN branch TEXT NOT NULL DEFAULT ''", [])?;
     }
 
-    // Migration : schémas antérieurs à la colonne `projects.git_token`
-    // (token des dépôts privés en https).
-    let has_token = conn
-        .prepare("PRAGMA table_info(projects)")
-        .and_then(|mut st| {
-            st.query_map([], |r| r.get::<_, String>(1))
-                .map(|it| it.flatten().any(|n| n == "git_token"))
-        })
-        .unwrap_or(true);
-    if !has_token {
-        let _ = conn.execute(
+    // Migration : schémas (par utilisateur, avec `user_id`) antérieurs à la
+    // colonne `projects.git_token`, que la migration suivante recopie.
+    // Uniquement pour ces schémas : le schéma actuel n'a plus `git_token`.
+    let old_projects = has_column(conn, "projects", "user_id")?;
+    if old_projects && !has_column(conn, "projects", "git_token")? {
+        conn.execute(
             "ALTER TABLE projects ADD COLUMN git_token TEXT NOT NULL DEFAULT ''",
             [],
-        );
+        )?;
     }
 
     // Migration : les schémas antérieurs donnaient aux projets un `user_id`
@@ -153,14 +158,7 @@ pub fn init_app_schema(conn: &Connection) -> anyhow::Result<()> {
     // tous : on reconstruit la table sans `user_id`. En cas de doublons de
     // nom entre utilisateurs, on garde le projet de plus petit id et on
     // redirige vers lui les tâches qui référençaient le doublon éliminé.
-    let projects_sql = conn
-        .query_row(
-            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'projects'",
-            [],
-            |r| r.get::<_, String>(0),
-        )
-        .unwrap_or_default();
-    if projects_sql.contains("user_id") {
+    if old_projects {
         conn.execute_batch(
             r#"
             PRAGMA foreign_keys = OFF;
@@ -196,14 +194,7 @@ pub fn init_app_schema(conn: &Connection) -> anyhow::Result<()> {
     // sont maintenant liés au couple (projet, utilisateur) : les tokens
     // existants non vides sont associés à l'unique (plus ancien) utilisateur
     // de la BDD, puis la colonne est retirée de `projects`.
-    let projects_sql2 = conn
-        .query_row(
-            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'projects'",
-            [],
-            |r| r.get::<_, String>(0),
-        )
-        .unwrap_or_default();
-    if projects_sql2.contains("git_token") {
+    if has_column(conn, "projects", "git_token")? {
         let users_count: i64 = conn
             .query_row("SELECT COUNT(*) FROM users", [], |r| r.get(0))
             .unwrap_or(0);
@@ -242,4 +233,28 @@ pub fn init_app_schema(conn: &Connection) -> anyhow::Result<()> {
         ))?;
     }
     Ok(())
+}
+
+/// La table `table` a-t-elle la colonne `col` ?
+fn has_column(conn: &Connection, table: &str, col: &str) -> rusqlite::Result<bool> {
+    let mut st = conn.prepare(&format!("PRAGMA table_info({table})"))?;
+    let names = st.query_map([], |r| r.get::<_, String>(1))?;
+    for n in names {
+        if n? == col {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// DDL (`CREATE TABLE …`) de la table `table`, vide si elle n'existe pas.
+fn table_sql(conn: &Connection, table: &str) -> rusqlite::Result<String> {
+    match conn.query_row(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?1",
+        [table],
+        |r| r.get(0),
+    ) {
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(String::new()),
+        r => r,
+    }
 }

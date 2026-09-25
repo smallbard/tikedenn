@@ -2,6 +2,7 @@
 //! draft / todo / progress / review / deploy / done, description longue et fichiers joints.
 
 use crate::auth::{self, CurrentUser};
+use crate::util::urlencode;
 use crate::AppState;
 use askama::Template;
 use axum::{
@@ -473,21 +474,7 @@ pub fn is_safe_branch(b: &str) -> bool {
         && !b.starts_with(['-', '.', '/'])
         && !b.ends_with('/')
         && !b.contains("..")
-        && b.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '/' | '_'))
-}
-
-/// Encode une chaîne pour un paramètre de query.
-fn urlencode(s: &str) -> String {
-    let mut out = String::new();
-    for &b in s.as_bytes() {
-        match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                out.push(b as char)
-            }
-            _ => out.push_str(&format!("%{:02X}", b)),
-        }
-    }
-    out
+        && b.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '/' | '_' | '-'))
 }
 
 /// Redirection vers la page de création avec un message d'erreur.
@@ -753,6 +740,26 @@ pub async fn upload_file(
     Redirect::to(&format!("/tasks/{task_id}/edit?project={filter}")).into_response()
 }
 
+/// En-tête `Content-Disposition` d'un téléchargement : nom ASCII de repli
+/// (`filename=`) + nom exact encodé en UTF-8 (`filename*=`, RFC 6266) — un
+/// en-tête http ne peut pas contenir de non-ASCII brut.
+fn content_disposition(name: &str) -> String {
+    let fallback: String = name
+        .chars()
+        .map(|c| {
+            if c == ' ' || (c.is_ascii_graphic() && c != '"' && c != '\\') {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    format!(
+        "attachment; filename=\"{fallback}\"; filename*=UTF-8''{}",
+        urlencode(name)
+    )
+}
+
 /// Téléchargement d'un fichier joint.
 pub async fn download_file(
     State(state): State<AppState>,
@@ -786,15 +793,13 @@ pub async fn download_file(
     } else {
         mime
     };
-    let safe_name: String = name.chars().filter(|c| *c != '"' && *c != '\n' && *c != '\r').collect();
     let mut resp = Body::from(data).into_response();
     if let Ok(hv) = mime.parse() {
         resp.headers_mut().insert(header::CONTENT_TYPE, hv);
     }
-    resp.headers_mut().insert(
-        header::CONTENT_DISPOSITION,
-        format!("attachment; filename=\"{safe_name}\"").parse().unwrap(),
-    );
+    if let Ok(hv) = content_disposition(&name).parse() {
+        resp.headers_mut().insert(header::CONTENT_DISPOSITION, hv);
+    }
     resp
 }
 
@@ -1207,8 +1212,8 @@ pub async fn task_diff_page(
     Extension(user): Extension<CurrentUser>,
     Path(id): Path<i64>,
 ) -> Response {
-    let conn = state.db.get().expect("pool db");
-    let task = match fetch_one_task(&conn, user.id, id) {
+    // Connexion rendue au pool avant le clone (qui peut durer).
+    let task = match fetch_one_task(&state.db.get().expect("pool db"), user.id, id) {
         Ok(Some(t)) => t,
         Ok(None) => {
             return (axum::http::StatusCode::NOT_FOUND, "Task not found.").into_response()
@@ -1265,13 +1270,19 @@ pub async fn task_diff_page(
         "tikedenn-git-{id}-{}",
         rand::thread_rng().gen::<u32>()
     ));
-    let res = compute_branch_diff(
-        project.git_repo.trim(),
-        task.branch.trim(),
-        &project.token,
-        &workdir,
+    // Clone réseau + diff : bloquant, donc hors des threads du runtime async.
+    let (repo_url, branch, token) = (
+        project.git_repo.trim().to_string(),
+        task.branch.trim().to_string(),
+        project.token.clone(),
     );
-    let _ = std::fs::remove_dir_all(&workdir); // nettoyage best effort
+    let res = tokio::task::spawn_blocking(move || {
+        let res = compute_branch_diff(&repo_url, &branch, &token, &workdir);
+        let _ = std::fs::remove_dir_all(&workdir); // nettoyage best effort
+        res
+    })
+    .await
+    .unwrap_or_else(|e| Err(format!("Diff task failed: {e}")));
 
     match res {
         Ok((base, files)) => auth::render(&TaskDiffTemplate {

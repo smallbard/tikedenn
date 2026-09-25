@@ -2,6 +2,7 @@ mod admin;
 mod auth;
 mod board;
 mod db;
+mod util;
 
 use axum::{
     extract::{DefaultBodyLimit, Request, State},
@@ -63,11 +64,9 @@ async fn require_auth(
         req.extensions_mut().insert(u);
         return next.run(req).await;
     }
-    let uri = req.uri().path().to_string();
-    let dest = if uri == "/" {
-        "/login".into()
-    } else {
-        format!("/login?next={uri}")
+    let dest = match req.uri().path_and_query().map(|pq| pq.as_str()) {
+        None | Some("/") => "/login".into(),
+        Some(target) => format!("/login?next={}", util::urlencode(target)),
     };
     (jar, Redirect::to(&dest)).into_response()
 }
@@ -79,9 +78,12 @@ async fn main() -> anyhow::Result<()> {
     let static_dir = env_or("STATIC_DIR", root.join("static"));
     let key = load_key(&env_or("SECRET_KEY_FILE", root.join("secret.key")))?;
 
-    let pool = r2d2::Pool::builder()
-        .max_size(8)
-        .build(SqliteConnectionManager::file(&app_db))?;
+    // Les PRAGMA foreign_keys / busy_timeout valent par connexion : on les
+    // applique à chaque connexion ouverte par le pool (sinon pas de cascade).
+    let manager = SqliteConnectionManager::file(&app_db).with_init(|c| {
+        c.execute_batch("PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;")
+    });
+    let pool = r2d2::Pool::builder().max_size(8).build(manager)?;
     {
         let conn = pool.get()?;
         db::init_app_schema(&conn)?;

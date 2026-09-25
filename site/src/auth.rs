@@ -5,7 +5,7 @@ use argon2::{
 };
 use askama::Template;
 use axum::{
-    extract::State,
+    extract::{Query, State},
     response::{Html, IntoResponse, Redirect, Response},
     Form,
 };
@@ -88,31 +88,41 @@ pub struct LandingTemplate {
     pub registration_enabled: bool,
 }
 
-pub async fn login_form() -> Response {
+#[derive(Deserialize)]
+pub struct NextQuery {
+    next: Option<String>,
+}
+
+pub async fn login_form(Query(q): Query<NextQuery>) -> Response {
     render(&AuthFormTemplate {
         user: None,
         is_register: false,
-        next: None,
+        next: q.next,
         error: None,
     })
 }
 
-pub async fn register_form() -> Response {
+pub async fn register_form(Query(q): Query<NextQuery>) -> Response {
     render(&AuthFormTemplate {
         user: None,
         is_register: true,
-        next: None,
+        next: q.next,
         error: None,
     })
 }
 
+/// Cible de redirection locale uniquement (pas d'open redirect) : un chemin
+/// absolu, mais ni `//hote` ni `/\hote` (interprétés comme URL externes).
+fn is_local_path(n: &str) -> bool {
+    n.starts_with('/') && !n.starts_with("//") && !n.starts_with("/\\")
+}
+
 fn auth_redirect(next: &Option<String>) -> Response {
-    let target = match next {
-        // ?next=/... uniquement : pas d'URL externe (open redirect).
-        Some(n) if n.starts_with('/') => Redirect::to(n),
+    match next {
+        Some(n) if is_local_path(n) => Redirect::to(n),
         _ => Redirect::to("/"),
-    };
-    target.into_response()
+    }
+    .into_response()
 }
 
 #[derive(Deserialize)]

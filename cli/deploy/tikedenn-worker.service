@@ -1,0 +1,29 @@
+# Service systemd *utilisateur* du worker Tikedenn (tkd worker) : démarre avec
+# la machine et relance le worker s'il s'arrête. Voir la section « Worker au
+# démarrage » du README.
+#
+#   cp cli/deploy/tikedenn-worker.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now tikedenn-worker
+#   sudo loginctl enable-linger "$USER"      # démarrage au boot, sans session ouverte
+
+[Unit]
+Description=Tikedenn worker (AI agents on the kanban board)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# tkd, claude, publish (~/.local/bin), cargo (~/.cargo/bin) ; ajouter le
+# dossier bin de node si l'agent est pi (ex. %h/.nvm/versions/node/vXX/bin).
+Environment=PATH=%h/.local/bin:%h/.cargo/bin:/usr/local/bin:/usr/bin:/bin:/snap/bin
+# Options : --agent claude|pi, --max-parallel N, --project P, --no-deploy.
+ExecStart=%h/.local/bin/tkd worker
+Restart=on-failure
+RestartSec=30
+# À l'arrêt, les agents en cours sont tués aussi ; leurs tâches redeviennent
+# disponibles quand le bail expire (30 min).
+KillMode=control-group
+
+[Install]
+WantedBy=default.target

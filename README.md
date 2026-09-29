@@ -126,6 +126,32 @@ aussi n'importe quelle commande avec les droits de l'utilisateur — à réserve
 "-p", "{prompt}", "--permission-mode", "acceptEdits", "--allowedTools",
 "Bash(git:*),Bash(tkd:*)"]`.
 
+### Worker au démarrage (systemd utilisateur)
+
+`tkd worker` ne tourne que tant qu'on le lance. Pour qu'il démarre avec la
+machine, installer le service utilisateur fourni (sous son propre compte, pour
+garder ses identifiants git / SSH et sa configuration `tkd`) :
+
+```sh
+tkd login --url https://… --token tkd_…         # d'abord : sinon le service échoue en boucle
+cp cli/deploy/tikedenn-worker.service ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now tikedenn-worker
+sudo loginctl enable-linger "$USER"             # démarrage au boot, même sans session ouverte
+```
+
+- Journaux du worker : `journalctl --user -u tikedenn-worker -f` ; sortie de
+  chaque agent : `~/.cache/tikedenn/logs/`.
+- Options (`--agent pi`, `--max-parallel 2`, `--no-deploy`…) : sur la ligne
+  `ExecStart`, ou dans `[worker]` de `~/.config/tikedenn/config.toml`.
+- Le `PATH` du service doit contenir `tkd`, `claude`, `publish` et, pour pi,
+  le dossier `bin` de node (nvm) ; les push en SSH demandent une clé sans
+  phrase de passe ou un agent SSH accessible au service.
+- `systemctl --user stop tikedenn-worker` tue aussi les agents en cours : leurs
+  tâches redeviennent disponibles à l'expiration du bail (30 min).
+- Avec `--dangerously-skip-permissions` (défaut), ce sont des agents sans
+  garde-fou qui tournent en permanence : à réserver à une machine de confiance.
+
 ## Développement
 
 ```sh

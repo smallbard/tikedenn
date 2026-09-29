@@ -3,12 +3,12 @@
 {% block content %}
 <section class="landing-hero">
   <h1>Tikedenn</h1>
-  <p class="tagline">A small kanban board for your development tasks.</p>
+  <p class="tagline">A kanban board where AI agents pick up the work and humans review it.</p>
   <p class="pitch">
-    Track work from <em>draft</em> to <em>done</em> through six clear states, group tasks by
-    project, and link each task to a <strong>git branch</strong> to review the diff against
-    <code>main</code> — even for private repositories. No JavaScript framework, no account
-    sprawl: one small Rust server and one SQLite file.
+    Queue tasks from <em>draft</em> to <em>to do</em>; coding agents (Claude Code, pi) claim them,
+    work on a <strong>git branch</strong> and submit a report. You review the diff, approve or
+    request changes — approved tasks are merged and published automatically. No JavaScript
+    framework: one small Rust server and one SQLite file.
   </p>
   <p class="landing-cta">
     <a class="btn" href="/login">Log in</a>
@@ -99,9 +99,12 @@
 <section class="landing-feats">
   <h2>What's inside</h2>
   <ul class="feat-list">
-    <li><strong>Six-state kanban</strong> — draft, to do, in progress, to review, to deploy, done; move cards by drag &amp; drop or by select.</li>
+    <li><strong>Six-state kanban, shared</strong> — draft, to do, in progress, to review, to deploy, done; one board for the whole team, updated live.</li>
+    <li><strong>Built for AI agents</strong> — a JSON API, an MCP server and the <code>tkd</code> CLI: agents claim tasks (with a lease), read the spec and review feedback, and submit their work.</li>
+    <li><strong>Human in the loop</strong> — agents cannot approve their own work: you review each branch diff with the agent's report, then approve or send it back with comments.</li>
+    <li><strong>Worker &amp; deploys</strong> — <code>tkd worker</code> runs one agent per task in its own git worktree, and merges + publishes the tasks you approve.</li>
     <li><strong>Projects</strong> — group your tasks and attach a git repository (with an optional token for private http(s) repos) to each one.</li>
-    <li><strong>Git branches &amp; diffs</strong> — any task can point at a branch; the diff against <code>main</code> is rendered file by file in one click.</li>
+    <li><strong>Git branches &amp; diffs</strong> — any task can point at a branch; the diff against the base branch is rendered file by file in one click.</li>
     <li><strong>Attachments</strong> — files stored next to your tasks (10&nbsp;MB max each).</li>
     <li><strong>Self-hosted &amp; boring</strong> — one Rust binary, one SQLite file, classic HTML forms. <a href="https://github.com/smallbard/tikedenn" rel="noopener">Browse the source on GitHub →</a></li>
   </ul>

@@ -50,7 +50,7 @@ pub struct ErrorQuery {
     error: Option<String>,
 }
 
-/// Liste des utilisateurs (avec leur nombre de tâches).
+/// Liste des utilisateurs (avec le nombre de tâches qu'ils ont créées).
 pub async fn users(
     State(state): State<AppState>,
     Extension(admin): Extension<CurrentUser>,
@@ -84,7 +84,8 @@ pub async fn users(
     }))
 }
 
-/// Supprime un utilisateur et ses données (cascade). L'administrateur ne
+/// Supprime un utilisateur (tokens en cascade ; ses tâches restent sur le
+/// tableau partagé, sans créateur). L'administrateur ne
 /// peut pas se supprimer.
 pub async fn delete_user(
     State(state): State<AppState>,

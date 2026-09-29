@@ -1,5 +1,6 @@
-//! Diff de la branche d'une tâche vs main : clone temporaire du dépôt git du
-//! projet (git2), diff d'arbres, rendu par fichier.
+//! Diff de la branche d'une tâche vs la branche de base du projet : clone en
+//! cache du dépôt git du projet (git2), diff d'arbres depuis le point de
+//! divergence, rendu par fichier. C'est la page de revue humaine.
 
 use crate::auth::CurrentUser;
 use crate::board::{fetch_one_task, is_safe_branch, TaskRow};
@@ -12,8 +13,10 @@ use axum::{
     http::StatusCode,
     response::Response,
 };
-use git2::{Cred, DiffFlags, FetchOptions, Patch, RemoteCallbacks, Repository};
-use rand::Rng;
+use git2::{Cred, DiffFlags, FetchOptions, FetchPrune, Patch, RemoteCallbacks, Repository};
+use std::collections::HashMap;
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 
 /// Une ligne d'un diff unifié.
 pub struct DiffLine {
@@ -40,6 +43,8 @@ pub struct TaskDiffTemplate {
     pub base: String,
     pub files: Vec<DiffFile>,
     pub error: Option<String>,
+    /// Filtre projet du tableau à préserver (formulaires de revue).
+    pub filter: i64,
 }
 
 /// Trouve la première ref existante parmi `pairs` (nom affiché, ref) et renvoie
@@ -87,24 +92,66 @@ fn patch_lines(patch: &Patch) -> Result<(Vec<DiffLine>, usize, usize), String> {
     Ok((lines, added, deleted))
 }
 
-/// Clone le dépôt dans `workdir` et calcule le diff (arbres de commits)
-/// `branch` vs la branche de base (main, sinon master).
+/// Répertoire des clones en cache (un dépôt nu par projet), réutilisés d'un
+/// affichage de diff à l'autre : seul un `fetch` incrémental est refait.
+fn cache_root() -> PathBuf {
+    std::env::var("GIT_CACHE_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| std::env::temp_dir().join("tikedenn-git-cache"))
+}
+
+/// Verrou par projet : deux diffs simultanés ne fetchent pas le même cache.
+fn project_lock(project_id: i64) -> Arc<Mutex<()>> {
+    static LOCKS: Mutex<Option<HashMap<i64, Arc<Mutex<()>>>>> = Mutex::new(None);
+    let mut guard = LOCKS.lock().unwrap_or_else(|e| e.into_inner());
+    guard.get_or_insert_with(HashMap::new).entry(project_id).or_default().clone()
+}
+
+/// Ouvre (ou crée) le dépôt nu en cache du projet, avec `origin` pointant
+/// vers `repo_url`.
+fn open_cache(path: &std::path::Path, repo_url: &str) -> Result<Repository, String> {
+    let repo = match Repository::open_bare(path) {
+        Ok(r) => r,
+        Err(_) => {
+            let _ = std::fs::remove_dir_all(path);
+            Repository::init_bare(path).map_err(|e| format!("Could not initialize the clone: {e}"))?
+        }
+    };
+    let same_url = repo
+        .find_remote("origin")
+        .ok()
+        .and_then(|r| r.url().ok().map(|u| u == repo_url))
+        .unwrap_or(false);
+    if !same_url {
+        let _ = repo.remote_delete("origin");
+        repo.remote("origin", repo_url)
+            .map_err(|e| format!("Could not add the remote {repo_url}: {e}"))?;
+    }
+    Ok(repo)
+}
+
+/// Met à jour le clone en cache du projet et calcule le diff de `branch`
+/// depuis son point de divergence avec la branche de base (`base_pref`, ou
+/// main puis master) — comme la vue « three-dot » des forges.
 /// `token` : token optionnel de l'utilisateur, utilisé en authentification
-/// http(s) (dépôts privés GitHub/GitLab/Gitea). Renvoie (nom de la base, fichiers).
+/// http(s) (dépôts privés GitHub/GitLab/Gitea). Le fetch est refait à chaque
+/// fois (et doit réussir) : le cache ne donne jamais accès à un dépôt privé
+/// sans token valide. Renvoie (nom de la base, fichiers).
 fn compute_branch_diff(
+    project_id: i64,
     repo_url: &str,
     branch: &str,
+    base_pref: &str,
     token: &str,
-    workdir: &std::path::Path,
 ) -> Result<(String, Vec<DiffFile>), String> {
-    // Clone manuel (init + remote + fetch) pour pouvoir injecter un callback
-    // d'authentification avant le téléchargement.
-    let repo =
-        Repository::init(workdir).map_err(|e| format!("Could not initialize the clone: {e}"))?;
+    let lock = project_lock(project_id);
+    let _guard = lock.lock().unwrap_or_else(|e| e.into_inner());
+    let repo = open_cache(&cache_root().join(format!("project-{project_id}")), repo_url)?;
     let mut remote = repo
-        .remote("origin", repo_url)
-        .map_err(|e| format!("Could not add the remote {repo_url}: {e}"))?;
+        .find_remote("origin")
+        .map_err(|e| format!("Could not open the remote: {e}"))?;
     let mut opts = FetchOptions::new();
+    opts.prune(FetchPrune::On);
     if is_http_url(repo_url) && !token.is_empty() {
         let tok = token.to_string();
         let mut cbs = RemoteCallbacks::new();
@@ -116,26 +163,29 @@ fn compute_branch_diff(
         opts.remote_callbacks(cbs);
     }
     remote
-        .fetch::<&str>(&[], Some(&mut opts), None)
-        .map_err(|e| format!("Could not clone {repo_url}: {e}"))?;
-    let (base, base_commit) = find_commit_named(
-        &repo,
-        &[
-            ("main", "refs/remotes/origin/main"),
-            ("main", "refs/heads/main"),
-            ("master", "refs/remotes/origin/master"),
-            ("master", "refs/heads/master"),
-        ],
-    )
-    .ok_or_else(|| "Base branch not found (main / master).".to_string())?;
-    let (_, head_commit) = find_commit_named(
-        &repo,
-        &[
-            (branch, &format!("refs/heads/{branch}")),
-            (branch, &format!("refs/remotes/origin/{branch}")),
-        ],
-    )
-    .ok_or_else(|| format!("Branch '{branch}' not found in the repository."))?;
+        .fetch(&["+refs/heads/*:refs/remotes/origin/*"], Some(&mut opts), None)
+        .map_err(|e| format!("Could not fetch {repo_url}: {e}"))?;
+    let preferred = format!("refs/remotes/origin/{base_pref}");
+    let bases: Vec<(&str, &str)> = if base_pref.is_empty() {
+        vec![("main", "refs/remotes/origin/main"), ("master", "refs/remotes/origin/master")]
+    } else {
+        vec![(base_pref, preferred.as_str())]
+    };
+    let (base, base_commit) = find_commit_named(&repo, &bases).ok_or_else(|| {
+        if base_pref.is_empty() {
+            "Base branch not found (main / master).".to_string()
+        } else {
+            format!("Base branch '{base_pref}' not found.")
+        }
+    })?;
+    let (_, head_commit) = find_commit_named(&repo, &[(branch, &format!("refs/remotes/origin/{branch}"))])
+        .ok_or_else(|| format!("Branch '{branch}' not found in the repository (not pushed yet?)."))?;
+    // Point de divergence : les commits arrivés sur la base depuis ne
+    // polluent pas le diff.
+    let base_commit = match repo.merge_base(base_commit.id(), head_commit.id()) {
+        Ok(oid) => repo.find_commit(oid).map_err(|e| format!("Could not read the merge base: {e}"))?,
+        Err(_) => base_commit,
+    };
 
     let base_tree = base_commit
         .tree()
@@ -181,7 +231,9 @@ fn compute_branch_diff(
     Ok((base, files))
 }
 
-/// Page du diff entre la branche de la tâche et main.
+/// Page du diff entre la branche de la tâche et la branche de base, avec le
+/// panneau de revue (approuver / demander des modifications) si la tâche
+/// attend une revue.
 pub async fn task_diff_page(
     State(state): State<AppState>,
     Extension(user): Extension<CurrentUser>,
@@ -189,13 +241,15 @@ pub async fn task_diff_page(
 ) -> AppResult {
     // Connexion rendue au pool avant le clone (qui peut durer).
     let task = fetch_one_task(&*state.conn()?, user.id, id)?;
-    let page = |task, status, result: Result<(String, Vec<DiffFile>), String>| -> Response {
+    let page = |task: TaskRow, status, result: Result<(String, Vec<DiffFile>), String>| -> Response {
         let (base, files, error) = match result {
             Ok((base, files)) => (base, files, None),
             Err(e) => (String::new(), vec![], Some(e)),
         };
+        let filter = task.project_id_or_zero();
         let mut resp = render(&TaskDiffTemplate {
             user: Some(user.clone()),
+            filter,
             task,
             base,
             files,
@@ -223,16 +277,12 @@ pub async fn task_diff_page(
         return Ok(page(task, StatusCode::UNPROCESSABLE_ENTITY, Err(msg.into())));
     }
     let token = project.token.trim().to_string();
+    let base_pref = project.default_branch.trim().to_string();
+    let project_id = project.id;
 
-    // Clone réseau + diff : bloquant, donc hors des threads du runtime async.
-    let workdir = std::env::temp_dir().join(format!(
-        "tikedenn-git-{id}-{}",
-        rand::thread_rng().gen::<u32>()
-    ));
+    // Fetch réseau + diff : bloquant, donc hors des threads du runtime async.
     let result = tokio::task::spawn_blocking(move || {
-        let res = compute_branch_diff(&repo_url, &branch, &token, &workdir);
-        let _ = std::fs::remove_dir_all(&workdir); // nettoyage best effort
-        res
+        compute_branch_diff(project_id, &repo_url, &branch, &base_pref, &token)
     })
     .await
     .unwrap_or_else(|e| Err(format!("Diff task failed: {e}")));

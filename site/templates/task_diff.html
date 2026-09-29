@@ -3,12 +3,16 @@
 {% block content %}
 <div class="page-head">
   <h1>Branch diff</h1>
-  <a class="linklike" href="/tasks/{{ task.id }}/edit?project={{ task.project_id_or_zero() }}">← Back to the task</a>
+  <a class="linklike" href="/tasks/{{ task.id }}/edit?project={{ filter }}">← Back to the task</a>
 </div>
 <p class="diff-head">
-  <code>{{ task.branch }}</code> vs <code>{% if base.is_empty() %}main{% else %}{{ base }}{% endif %}</code>
+  #{{ task.id }} {{ task.title }} — <code>{{ task.branch }}</code> vs <code>{% if base.is_empty() %}main{% else %}{{ base }}{% endif %}</code>
   {% if let Some(p) = task.project %}<span class="empty">— repo <code>{{ p.git_repo }}</code></span>{% endif %}
 </p>
+
+{% if task.status == "review" %}
+{% include "review_panel.html" %}
+{% endif %}
 
 {% if let Some(e) = error %}
 <p class="error">{{ e }}</p>

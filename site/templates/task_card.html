@@ -1,18 +1,30 @@
-<div class="card task t-{{ task.status }}" draggable="true" data-id="{{ task.id }}" data-filter="{{ selected_project }}">
+<div class="card task t-{{ task.status }}" draggable="true" data-id="{{ task.id }}">
   <div class="card-head">
+    <span class="task-id">#{{ task.id }}</span>
     <strong class="card-title grow">{{ task.title }}</strong>
+  </div>
+  <div class="card-tags">
+    {% if task.priority != 1 %}<span class="tag prio-{{ task.priority }}">{{ task.priority_label() }}</span>{% endif %}
     {% if let Some(p) = task.project %}
     <span class="tag" {% if !p.git_repo.is_empty() %}title="{{ p.git_repo }}"{% endif %}>{{ p.name }}</span>
     {% endif %}
     {% if !task.branch.is_empty() %}
     <span class="tag" title="Git branch">⎇ {{ task.branch }}</span>
     {% endif %}
+    {% if task.claim_active %}
+    <span class="tag claim" title="Claimed{% if let Some(u) = task.claimed_until %} until {{ u }} UTC{% endif %}">🤖 {{ task.claimed_by }}</span>
+    {% else if !task.claimed_by.is_empty() %}
+    <span class="tag claim-expired" title="The lease of {{ task.claimed_by }} expired: the task can be taken over">⚠ lease expired</span>
+    {% endif %}
+    {% if !task.blocked_by.is_empty() %}
+    <span class="tag blocked" title="Waiting for these tasks to be done">⛔ #{{ task.blocked_text() }}</span>
+    {% endif %}
   </div>
   {% if !task.description_preview.is_empty() %}
   <p class="card-desc">{{ task.description_preview }}</p>
   {% endif %}
   <div class="card-actions">
-    <a class="linklike" href="/tasks/{{ task.id }}/edit?project={{ selected_project }}">Edit</a>
+    <a class="linklike" href="/tasks/{{ task.id }}/edit?project={{ selected_project }}">{% if task.status == "review" %}Review{% else %}Edit{% endif %}</a>
     {% if !task.branch.is_empty() %}<a class="linklike" href="/tasks/{{ task.id }}/diff">Diff</a>{% endif %}
   </div>
 </div>

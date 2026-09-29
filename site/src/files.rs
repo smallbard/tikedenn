@@ -1,39 +1,46 @@
 //! Pièces jointes des tâches (BLOB en BDD, 10 Mo max).
 
-use crate::auth::CurrentUser;
 use crate::util::urlencode;
 use crate::web::{AppError, AppResult};
 use crate::AppState;
 use axum::{
     body::Body,
-    extract::{multipart::Multipart, Extension, Path, State},
+    extract::{multipart::Multipart, Path, State},
     http::{header, StatusCode},
-    response::{IntoResponse, Redirect},
+    response::{IntoResponse, Redirect, Response},
 };
-use rusqlite::OptionalExtension;
+use rusqlite::{Connection, OptionalExtension};
 
 /// Taille maximale d'une pièce jointe (10 Mo).
-const MAX_FILE_SIZE: usize = 10 * 1024 * 1024;
+pub const MAX_FILE_SIZE: usize = 10 * 1024 * 1024;
+
+/// La tâche existe-t-elle ?
+pub fn task_exists(conn: &Connection, task_id: i64) -> rusqlite::Result<bool> {
+    Ok(conn
+        .query_row("SELECT 1 FROM tasks WHERE id = ?1", [task_id], |_| Ok(()))
+        .optional()?
+        .is_some())
+}
+
+/// Enregistre une pièce jointe (taille vérifiée par l'appelant) ; renvoie son id.
+pub fn insert_file(conn: &Connection, task_id: i64, name: &str, mime: &str, data: &[u8]) -> rusqlite::Result<i64> {
+    conn.execute(
+        "INSERT INTO files (task_id, name, size, mime, data) VALUES (?1, ?2, ?3, ?4, ?5)",
+        rusqlite::params![task_id, name, data.len() as i64, mime, data],
+    )?;
+    Ok(conn.last_insert_rowid())
+}
 
 /// Téléverse un fichier joint sur une tâche (multipart), puis revient sur
 /// la page d'édition. La connexion du pool n'est retenue que pour la
-/// vérification de propriété et l'INSERT — jamais pendant la lecture du
+/// vérification d'existence et l'INSERT — jamais pendant la lecture du
 /// corps (uploads lents).
 pub async fn upload_file(
     State(state): State<AppState>,
-    Extension(user): Extension<CurrentUser>,
     Path(task_id): Path<i64>,
     mut multipart: Multipart,
 ) -> AppResult {
-    let owned = state
-        .conn()?
-        .query_row(
-            "SELECT 1 FROM tasks WHERE id = ?1 AND user_id = ?2",
-            rusqlite::params![task_id, user.id],
-            |_| Ok(()),
-        )
-        .optional()?;
-    if owned.is_none() {
+    if !task_exists(&*state.conn()?, task_id)? {
         return Err(AppError::not_found("Task not found."));
     }
     // Erreur multipart (corps tronqué par la limite de taille, etc.) : ne pas
@@ -58,10 +65,7 @@ pub async fn upload_file(
                 "File too large (10 MB maximum).",
             ));
         }
-        state.conn()?.execute(
-            "INSERT INTO files (task_id, name, size, mime, data) VALUES (?1, ?2, ?3, ?4, ?5)",
-            rusqlite::params![task_id, file_name, data.len() as i64, mime, data.as_ref()],
-        )?;
+        insert_file(&*state.conn()?, task_id, &file_name, &mime, &data)?;
         // Un seul fichier par formulaire ; le champ `filter` le précède.
         return Ok(Redirect::to(&format!("/tasks/{task_id}/edit?project={filter}")).into_response());
     }
@@ -88,23 +92,23 @@ fn content_disposition(name: &str) -> String {
     )
 }
 
-/// Téléchargement d'un fichier joint (404 s'il appartient à un autre utilisateur).
-pub async fn download_file(
-    State(state): State<AppState>,
-    Extension(user): Extension<CurrentUser>,
-    Path(id): Path<i64>,
-) -> AppResult {
-    let (name, mime, data): (String, String, Vec<u8>) = state
-        .conn()?
+/// Téléchargement d'un fichier joint (UI).
+pub async fn download_file(State(state): State<AppState>, Path(id): Path<i64>) -> AppResult {
+    file_response(&*state.conn()?, id)?.ok_or(AppError::not_found("File not found."))
+}
+
+/// Réponse de téléchargement d'un fichier joint (UI et API) ; `None` s'il n'existe pas.
+pub fn file_response(conn: &Connection, id: i64) -> rusqlite::Result<Option<Response>> {
+    let Some((name, mime, data)): Option<(String, String, Vec<u8>)> = conn
         .query_row(
-            "SELECT f.name, f.mime, f.data
-             FROM files f JOIN tasks t ON t.id = f.task_id
-             WHERE f.id = ?1 AND t.user_id = ?2",
-            rusqlite::params![id, user.id],
+            "SELECT name, mime, data FROM files WHERE id = ?1",
+            [id],
             |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
         )
         .optional()?
-        .ok_or(AppError::not_found("File not found."))?;
+    else {
+        return Ok(None);
+    };
     let mut resp = Body::from(data).into_response();
     let headers = resp.headers_mut();
     let mime = if mime.is_empty() { "application/octet-stream" } else { &mime };
@@ -114,19 +118,12 @@ pub async fn download_file(
     if let Ok(hv) = content_disposition(&name).parse() {
         headers.insert(header::CONTENT_DISPOSITION, hv);
     }
-    Ok(resp)
+    Ok(Some(resp))
 }
 
 /// Supprime un fichier joint. Renvoie du vide (htmx remplace le `<li>`).
-pub async fn delete_file(
-    State(state): State<AppState>,
-    Extension(user): Extension<CurrentUser>,
-    Path(id): Path<i64>,
-) -> AppResult {
-    state.conn()?.execute(
-        "DELETE FROM files WHERE id = ?1 AND task_id IN (SELECT id FROM tasks WHERE user_id = ?2)",
-        rusqlite::params![id, user.id],
-    )?;
+pub async fn delete_file(State(state): State<AppState>, Path(id): Path<i64>) -> AppResult {
+    state.conn()?.execute("DELETE FROM files WHERE id = ?1", [id])?;
     Ok("".into_response())
 }
 

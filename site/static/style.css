@@ -320,3 +320,54 @@ form.delete-task { margin-top: 1.2rem; }
 
 .new-project { margin: 1rem 0 2rem; }
 .new-project input.grow { flex: 1; min-width: 160px; }
+/* --- Agents : cartes, journal, revue, tokens --- */
+.review-badge { background: #9b7ed8; color: #fff; padding: 0.1rem 0.6rem; border-radius: 999px; font-size: 0.9rem; }
+.review-badge .count { font-weight: 700; }
+.review-badge:hover { text-decoration: none; filter: brightness(1.1); }
+.card.task .task-id { color: var(--muted); font-size: 0.8rem; }
+.card-tags { display: flex; flex-wrap: wrap; gap: 0.3rem; margin-top: 0.3rem; }
+.card-tags .tag {
+  font-size: 0.72rem;
+  padding: 0.05rem 0.45rem;
+  border-radius: 999px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--muted);
+  white-space: nowrap;
+}
+.card-tags .prio-0 { opacity: 0.7; }
+.card-tags .prio-2 { color: #e0a95e; border-color: #e0a95e; }
+.card-tags .prio-3 { color: #fff; background: var(--danger); border-color: var(--danger); }
+.card-tags .claim { color: #d8a63a; border-color: #d8a63a; }
+.card-tags .claim-expired { color: var(--danger); border-color: var(--danger); }
+.card-tags .blocked { color: var(--danger); }
+.st-label { font-size: 0.9rem; font-weight: normal; padding: 0.1rem 0.5rem; border-radius: 4px; background: var(--panel); }
+.field-row { display: flex; gap: 0.8rem; flex-wrap: wrap; }
+.field-row label { flex: 1; min-width: 160px; }
+.claim-box { background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 0.5rem 0.8rem; margin: 0.6rem 0; }
+.claim-box form.inline { display: inline; }
+.review-panel { border: 2px solid #9b7ed8; border-radius: 8px; padding: 0.8rem 1rem; margin: 0.8rem 0 1rem; background: var(--panel); }
+.review-panel h2 { margin: 0 0 0.6rem; font-size: 1.1rem; }
+.review-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-top: 0.8rem; }
+.review-actions form { display: flex; flex-direction: column; gap: 0.4rem; max-width: none; }
+.review-actions textarea { width: 100%; }
+button.approve { background: #5fb86f; border-color: #5fb86f; color: #fff; }
+button.reject { background: var(--danger); border-color: var(--danger); color: #fff; }
+.acceptance summary { cursor: pointer; color: var(--muted); }
+.log-section { margin-top: 1rem; border-top: 1px solid var(--border); padding-top: 0.8rem; }
+.log-section h2 { font-size: 1rem; margin: 0 0 0.5rem; }
+.log-entry { border-left: 3px solid var(--border); padding: 0.3rem 0.7rem; margin-bottom: 0.5rem; }
+.log-entry.log-compact { font-size: 0.85rem; color: var(--muted); padding-top: 0; padding-bottom: 0; }
+.log-report { border-left-color: #d8a63a; }
+.log-review { border-left-color: #9b7ed8; }
+.log-deploy { border-left-color: #e0715e; }
+.log-comment { border-left-color: #4da3ff; }
+.log-meta { color: var(--muted); font-size: 0.85rem; }
+.log-meta .agent { color: #d8a63a; }
+.log-body { white-space: pre-wrap; word-break: break-word; margin-top: 0.2rem; }
+pre.log-body { font-size: 0.8rem; max-height: 30rem; overflow: auto; background: var(--bg); padding: 0.5rem; }
+.comment-form { display: flex; flex-direction: column; gap: 0.4rem; max-width: 700px; }
+.new-token { border: 2px solid #5fb86f; border-radius: 8px; padding: 0.6rem 1rem; margin: 0.8rem 0; }
+pre.copyable { background: var(--bg); padding: 0.5rem 0.7rem; border-radius: 4px; overflow-x: auto; user-select: all; }
+.setup li { margin-bottom: 0.4rem; }
+@media (max-width: 800px) { .review-actions { grid-template-columns: 1fr; } }

@@ -12,8 +12,12 @@
   <a class="brand" href="/dashboard">Tikedenn</a>
   <a href="/dashboard">Board</a>
   <a href="/projects">Projects</a>
+  {% if let Some(u) = user %}
+  {% if u.to_review > 0 %}<a class="review-badge" href="/dashboard#col-review" title="Tasks waiting for a human review">To review <span class="count">{{ u.to_review }}</span></a>{% endif %}
+  {% endif %}
   <span class="spacer"></span>
   {% if let Some(u) = user %}
+    <a href="/settings/tokens" title="API tokens for AI agents (tkd CLI, MCP)">Agents</a>
     {% if u.is_admin %}<a href="/admin/users">Admin</a>{% endif %}
     <span class="who">{{ u.username }}</span>
     <form method="post" action="/logout"><button class="linklike">Log out</button></form>

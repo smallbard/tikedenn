@@ -92,6 +92,90 @@ pub fn init_app_schema(conn: &Connection) -> anyhow::Result<()> {
             "#,
         )?;
     }
+    if version < 3 {
+        migrate_v3(conn)?;
+    }
+    Ok(())
+}
+
+/// v3 — tableau partagé et travail des agents :
+/// - `tasks.user_id` devient le créateur (nullable, SET NULL : supprimer un
+///   compte ne supprime plus les tâches du tableau commun) ; nouvelles
+///   colonnes critères d'acceptation, priorité et prise en charge (bail) ;
+/// - `projects` : branche de base et nom de publication (`publish <nom>`) ;
+/// - dépendances entre tâches, journal des tâches, tokens d'API.
+/// Le schéma de base (CREATE TABLE IF NOT EXISTS plus haut) reste celui de la
+/// v2 : les évolutions ultérieures passent toutes par les migrations.
+fn migrate_v3(conn: &Connection) -> anyhow::Result<()> {
+    conn.execute_batch(
+        r#"
+        PRAGMA foreign_keys = OFF;
+        BEGIN;
+        CREATE TABLE tasks_new (
+            id            INTEGER PRIMARY KEY,
+            user_id       INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            project_id    INTEGER REFERENCES projects(id) ON DELETE SET NULL,
+            status        TEXT NOT NULL DEFAULT 'draft'
+                          CHECK (status IN ('draft','todo','progress','review','deploy','done')),
+            priority      INTEGER NOT NULL DEFAULT 1 CHECK (priority BETWEEN 0 AND 3),
+            branch        TEXT NOT NULL DEFAULT '',
+            title         TEXT NOT NULL,
+            description   TEXT NOT NULL DEFAULT '',
+            acceptance    TEXT NOT NULL DEFAULT '',
+            claimed_by    TEXT NOT NULL DEFAULT '',
+            claimed_until TEXT,
+            created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at    TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        INSERT INTO tasks_new (id, user_id, project_id, status, branch, title, description, created_at, updated_at)
+            SELECT id, user_id, project_id, status, branch, title, description, created_at, updated_at FROM tasks;
+        DROP TABLE tasks;
+        ALTER TABLE tasks_new RENAME TO tasks;
+        CREATE INDEX idx_tasks_status ON tasks(status, priority);
+
+        ALTER TABLE projects ADD COLUMN default_branch TEXT NOT NULL DEFAULT '';
+        ALTER TABLE projects ADD COLUMN publish_name TEXT NOT NULL DEFAULT '';
+
+        -- task_id est bloquée tant que depends_on n'est pas terminée.
+        CREATE TABLE task_deps (
+            task_id    INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+            depends_on INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+            PRIMARY KEY (task_id, depends_on),
+            CHECK (task_id != depends_on)
+        );
+
+        -- Journal d'une tâche : commentaires, rapports d'agents, revues,
+        -- changements d'état, prises en charge, logs de déploiement.
+        -- `agent` : nom du token si l'entrée vient de l'API ('' = humain via l'UI).
+        CREATE TABLE task_log (
+            id         INTEGER PRIMARY KEY,
+            task_id    INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+            user_id    INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            author     TEXT NOT NULL,
+            agent      TEXT NOT NULL DEFAULT '',
+            kind       TEXT NOT NULL
+                       CHECK (kind IN ('comment','report','review','move','claim','deploy')),
+            body       TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE INDEX idx_task_log_task ON task_log(task_id, id);
+
+        -- Tokens d'API des agents : seul le SHA-256 du token est stocké.
+        CREATE TABLE api_tokens (
+            id           INTEGER PRIMARY KEY,
+            user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            name         TEXT NOT NULL,
+            token_hash   TEXT NOT NULL UNIQUE,
+            scope        TEXT NOT NULL DEFAULT 'write' CHECK (scope IN ('read','write')),
+            created_at   TEXT NOT NULL DEFAULT (datetime('now')),
+            last_used_at TEXT,
+            UNIQUE (user_id, name)
+        );
+        PRAGMA user_version = 3;
+        COMMIT;
+        PRAGMA foreign_keys = ON;
+        "#,
+    )?;
     Ok(())
 }
 
@@ -273,7 +357,7 @@ mod tests {
         init_app_schema(&conn).unwrap();
         let ddl = table_sql(&conn, "projects").unwrap();
         init_app_schema(&conn).unwrap();
-        assert_eq!(version(&conn), 2);
+        assert_eq!(version(&conn), 3);
         assert_eq!(table_sql(&conn, "projects").unwrap(), ddl);
         assert!(!has_column(&conn, "projects", "git_token").unwrap());
     }
@@ -300,7 +384,7 @@ mod tests {
         )
         .unwrap();
         init_app_schema(&conn).unwrap();
-        assert_eq!(version(&conn), 2);
+        assert_eq!(version(&conn), 3);
         assert!(has_column(&conn, "users", "is_admin").unwrap());
         assert!(has_column(&conn, "tasks", "branch").unwrap());
         assert!(table_sql(&conn, "tasks").unwrap().contains("'review'"));
@@ -321,5 +405,31 @@ mod tests {
             .unwrap();
         // Doublon « P » redirigé vers le projet 1 ; tâche orpheline purgée.
         assert_eq!(tasks, vec![(1, Some(1)), (2, Some(1)), (3, Some(3))]);
+    }
+
+    #[test]
+    fn v3_shared_board_keeps_tasks_of_deleted_users() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
+        init_app_schema(&conn).unwrap();
+        assert!(has_column(&conn, "tasks", "claimed_by").unwrap());
+        assert!(has_column(&conn, "projects", "publish_name").unwrap());
+        conn.execute_batch(
+            "INSERT INTO users (username, email, pass_hash) VALUES ('a', 'a@x', 'h');
+             INSERT INTO tasks (user_id, title) VALUES (1, 't1'), (1, 't2');
+             INSERT INTO task_deps (task_id, depends_on) VALUES (2, 1);
+             INSERT INTO task_log (task_id, user_id, author, kind) VALUES (1, 1, 'a', 'comment');
+             DELETE FROM users;",
+        )
+        .unwrap();
+        let (tasks, orphans): (i64, i64) = conn
+            .query_row("SELECT COUNT(*), COUNT(*) FILTER (WHERE user_id IS NULL) FROM tasks", [], |r| {
+                Ok((r.get(0)?, r.get(1)?))
+            })
+            .unwrap();
+        assert_eq!((tasks, orphans), (2, 2));
+        conn.execute("DELETE FROM tasks WHERE id = 1", []).unwrap();
+        let deps: i64 = conn.query_row("SELECT COUNT(*) FROM task_deps", [], |r| r.get(0)).unwrap();
+        assert_eq!(deps, 0);
     }
 }

@@ -18,6 +18,8 @@ pub struct CurrentUser {
     pub id: i64,
     pub username: String,
     pub is_admin: bool,
+    /// Tâches en attente de revue (badge de la navigation).
+    pub to_review: i64,
 }
 
 /// Utilisateur courant d'après le cookie de session signé (uid).
@@ -25,13 +27,15 @@ pub fn current_user(state: &AppState, jar: &SignedCookieJar) -> Option<CurrentUs
     let uid: i64 = jar.get("uid")?.value().parse().ok()?;
     let conn = state.db.get().ok()?;
     conn.query_row(
-        "SELECT id, username, is_admin FROM users WHERE id = ?1",
+        "SELECT id, username, is_admin, (SELECT COUNT(*) FROM tasks WHERE status = 'review')
+         FROM users WHERE id = ?1",
         [uid],
         |r| {
             Ok(CurrentUser {
                 id: r.get(0)?,
                 username: r.get(1)?,
                 is_admin: r.get(2)?,
+                to_review: r.get(3)?,
             })
         },
     )

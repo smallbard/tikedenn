@@ -1,18 +1,24 @@
 mod admin;
+mod api;
 mod auth;
 mod board;
 mod db;
 mod files;
 mod git_diff;
+mod mcp;
+mod notify;
 mod projects;
+mod review;
+mod tokens;
 mod util;
 mod web;
+mod workflow;
 
 use axum::{
     extract::{DefaultBodyLimit, Request, State},
     middleware::{self, Next},
     response::{IntoResponse, Redirect, Response},
-    routing::{get, post},
+    routing::{any, get, post, put},
     Router,
 };
 use axum_extra::extract::cookie::{Key, SignedCookieJar};
@@ -129,6 +135,7 @@ async fn main() -> anyhow::Result<()> {
     // 11 Mo : fichier de 10 Mo + overhead multipart (axum limite à 2 Mo par défaut).
     let protected = Router::new()
         .route("/dashboard", get(board::dashboard))
+        .route("/dashboard/board", get(board::board_fragment))
         .route("/projects", get(projects::projects_page).post(projects::create_project))
         .route("/projects/{id}", post(projects::update_project))
         .route("/projects/{id}/delete", post(projects::delete_project))
@@ -139,9 +146,15 @@ async fn main() -> anyhow::Result<()> {
         .route("/tasks/{id}", post(board::update_task))
         .route("/tasks/{id}/move", post(board::move_task))
         .route("/tasks/{id}/delete", post(board::delete_task))
+        .route("/tasks/{id}/comments", post(review::add_comment))
+        .route("/tasks/{id}/approve", post(review::approve))
+        .route("/tasks/{id}/request-changes", post(review::request_changes))
+        .route("/tasks/{id}/release", post(review::release))
         .route("/tasks/{id}/files", post(files::upload_file))
         .route("/files/{id}", get(files::download_file))
         .route("/files/{id}/delete", post(files::delete_file))
+        .route("/settings/tokens", get(tokens::list).post(tokens::create))
+        .route("/settings/tokens/{id}/delete", post(tokens::delete))
         .merge(admin)
         .route_layer(middleware::from_fn_with_state(
             state.clone(),
@@ -149,10 +162,33 @@ async fn main() -> anyhow::Result<()> {
         ))
         .layer(DefaultBodyLimit::max(11 * 1024 * 1024));
 
+    // API des agents (JSON) et serveur MCP : authentification par token
+    // (Authorization: Bearer), pas par cookie.
+    let agents = Router::new()
+        .route("/api/v1/me", get(api::me))
+        .route("/api/v1/projects", get(api::projects))
+        .route("/api/v1/tasks", get(api::list_tasks).post(api::create_task))
+        .route("/api/v1/tasks/claim-next", post(api::claim_next))
+        .route("/api/v1/tasks/{id}", get(api::get_task).patch(api::patch_task))
+        .route("/api/v1/tasks/{id}/claim", post(api::claim))
+        .route("/api/v1/tasks/{id}/release", post(api::release))
+        .route("/api/v1/tasks/{id}/move", post(api::move_task))
+        .route("/api/v1/tasks/{id}/comments", post(api::add_comment))
+        .route("/api/v1/tasks/{id}/files/{name}", put(api::upload_file))
+        .route("/api/v1/files/{id}", get(api::download_file))
+        .route("/mcp", post(mcp::post).get(mcp::get))
+        .route_layer(middleware::from_fn_with_state(
+            state.clone(),
+            tokens::require_token,
+        ))
+        .route("/api/{*rest}", any(api::not_found))
+        .layer(DefaultBodyLimit::max(11 * 1024 * 1024));
+
     let router = Router::new()
         .route("/", get(index))
         .merge(public)
         .merge(protected)
+        .merge(agents)
         .with_state(state);
 
     let addr = std::env::var("BIND").unwrap_or_else(|_| "127.0.0.1:3003".into());

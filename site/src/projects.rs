@@ -2,6 +2,7 @@
 //! utilisateur peut y associer son propre token git (table `project_tokens`).
 
 use crate::auth::CurrentUser;
+use crate::board::is_safe_branch;
 use crate::web::{redirect_with_error, render, AppResult};
 use crate::AppState;
 use askama::Template;
@@ -17,16 +18,33 @@ pub struct ProjectRow {
     pub id: i64,
     pub name: String,
     pub git_repo: String,
+    /// Branche de base des diffs et des déploiements (vide = main, sinon master).
+    pub default_branch: String,
+    /// Nom du projet pour `publish <nom>` (vide = pas de publication).
+    pub publish_name: String,
     /// Token optionnel (dépôt privé en https) de l'utilisateur courant ;
     /// jamais affiché dans l'UI.
     pub token: String,
+}
+
+impl ProjectRow {
+    /// Vue JSON (API) : sans le token.
+    pub fn to_api(&self) -> tikedenn_common::api::Project {
+        tikedenn_common::api::Project {
+            id: self.id,
+            name: self.name.clone(),
+            git_repo: self.git_repo.clone(),
+            default_branch: self.default_branch.clone(),
+            publish_name: self.publish_name.clone(),
+        }
+    }
 }
 
 /// Tous les projets (partagés : pas de filtre par utilisateur), avec le
 /// token de l'utilisateur courant.
 pub fn fetch_projects(conn: &Connection, user_id: i64) -> rusqlite::Result<Vec<ProjectRow>> {
     conn.prepare(
-        "SELECT p.id, p.name, p.git_repo,
+        "SELECT p.id, p.name, p.git_repo, p.default_branch, p.publish_name,
                 COALESCE((SELECT t.token FROM project_tokens t WHERE t.project_id = p.id AND t.user_id = ?1), '')
          FROM projects p ORDER BY p.name COLLATE NOCASE",
     )?
@@ -35,10 +53,21 @@ pub fn fetch_projects(conn: &Connection, user_id: i64) -> rusqlite::Result<Vec<P
             id: r.get(0)?,
             name: r.get(1)?,
             git_repo: r.get(2)?,
-            token: r.get(3)?,
+            default_branch: r.get(3)?,
+            publish_name: r.get(4)?,
+            token: r.get(5)?,
         })
     })?
     .collect()
+}
+
+/// Projet désigné par son id ou son nom (API, CLI des agents).
+pub fn find_project<'a>(projects: &'a [ProjectRow], key: &str) -> Option<&'a ProjectRow> {
+    let key = key.trim();
+    match key.parse::<i64>() {
+        Ok(id) => projects.iter().find(|p| p.id == id),
+        Err(_) => projects.iter().find(|p| p.name.eq_ignore_ascii_case(key)),
+    }
 }
 
 /// Renvoie vrai si l'URL est sûre pour un attribut `href` :
@@ -60,6 +89,8 @@ pub struct ProjectItemRow {
     pub id: i64,
     pub name: String,
     pub git_repo: String,
+    pub default_branch: String,
+    pub publish_name: String,
     pub tasks: i64,
     /// Un token est configuré pour ce dépôt par l'utilisateur courant
     /// (indicateur, jamais affiché en clair).
@@ -95,7 +126,7 @@ pub async fn projects_page(
     let conn = state.conn()?;
     let projects = conn
         .prepare(
-            "SELECT p.id, p.name, p.git_repo,
+            "SELECT p.id, p.name, p.git_repo, p.default_branch, p.publish_name,
                     (SELECT COUNT(*) FROM tasks t WHERE t.project_id = p.id),
                     (EXISTS (SELECT 1 FROM project_tokens t
                              WHERE t.project_id = p.id AND t.user_id = ?1))
@@ -106,8 +137,10 @@ pub async fn projects_page(
                 id: r.get(0)?,
                 name: r.get(1)?,
                 git_repo: r.get(2)?,
-                tasks: r.get(3)?,
-                has_token: r.get(4)?,
+                default_branch: r.get(3)?,
+                publish_name: r.get(4)?,
+                tasks: r.get(5)?,
+                has_token: r.get(6)?,
             })
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -125,12 +158,31 @@ pub struct ProjectForm {
     git_repo: String,
     #[serde(default)]
     git_token: String,
+    #[serde(default)]
+    default_branch: String,
+    #[serde(default)]
+    publish_name: String,
 }
 
 impl ProjectForm {
     /// Champs nettoyés (nom, dépôt, token).
     fn trimmed(&self) -> (&str, &str, &str) {
         (self.name.trim(), self.git_repo.trim(), self.git_token.trim())
+    }
+
+    /// Branche de base et nom de publication, validés.
+    fn extras(&self) -> Result<(&str, &str), &'static str> {
+        let branch = self.default_branch.trim();
+        if !branch.is_empty() && !is_safe_branch(branch) {
+            return Err("Invalid default branch name.");
+        }
+        let publish = self.publish_name.trim();
+        if publish.len() > 64
+            || !publish.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+        {
+            return Err("Publish name: letters, digits, '-', '_' or '.' only.");
+        }
+        Ok((branch, publish))
     }
 }
 
@@ -186,13 +238,15 @@ pub async fn create_project(
     Form(f): Form<ProjectForm>,
 ) -> AppResult {
     let (name, repo, token) = f.trimmed();
-    if let Err(msg) = validate_project(name, repo, token) {
-        return Ok(projects_error(msg));
-    }
+    let extras = validate_project(name, repo, token).and_then(|_| f.extras());
+    let (branch, publish) = match extras {
+        Ok(e) => e,
+        Err(msg) => return Ok(projects_error(msg)),
+    };
     let conn = state.conn()?;
     if let Err(e) = conn.execute(
-        "INSERT INTO projects (name, git_repo) VALUES (?1, ?2)",
-        rusqlite::params![name, repo],
+        "INSERT INTO projects (name, git_repo, default_branch, publish_name) VALUES (?1, ?2, ?3, ?4)",
+        rusqlite::params![name, repo, branch, publish],
     ) {
         return Ok(projects_error(project_write_error(e)?));
     }
@@ -208,13 +262,15 @@ pub async fn update_project(
     Form(f): Form<ProjectForm>,
 ) -> AppResult {
     let (name, repo, token) = f.trimmed();
-    if let Err(msg) = validate_project(name, repo, token) {
-        return Ok(projects_error(msg));
-    }
+    let extras = validate_project(name, repo, token).and_then(|_| f.extras());
+    let (branch, publish) = match extras {
+        Ok(e) => e,
+        Err(msg) => return Ok(projects_error(msg)),
+    };
     let conn = state.conn()?;
     match conn.execute(
-        "UPDATE projects SET name = ?1, git_repo = ?2 WHERE id = ?3",
-        rusqlite::params![name, repo, id],
+        "UPDATE projects SET name = ?1, git_repo = ?2, default_branch = ?3, publish_name = ?4 WHERE id = ?5",
+        rusqlite::params![name, repo, branch, publish, id],
     ) {
         Err(e) => return Ok(projects_error(project_write_error(e)?)),
         // Projet inexistant : ne pas créer de token orphelin (FK).

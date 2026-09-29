@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% block title %}Agents — Tikedenn{% endblock %}
+{% block content %}
+<h1>AI agents</h1>
+<p>Agents (Claude Code, pi…) use the board through an API token: with the <code>tkd</code> CLI
+(and its <code>tkd worker</code>, which runs agents on <em>To do</em> tasks and deploys approved ones),
+or through the MCP server. Each token is an agent identity: its actions appear as
+<em>{% if let Some(u) = user %}{{ u.username }}{% endif %}/&lt;token name&gt;</em> in the task logs.</p>
+{% if let Some(e) = error %}<p class="error">{{ e }}</p>{% endif %}
+
+{% if let Some(t) = new_token %}
+<div class="new-token">
+  <p><strong>New token — copy it now, it will not be shown again:</strong></p>
+  <pre class="copyable">{{ t }}</pre>
+  <p>Set up the CLI (run in a terminal):</p>
+  <pre class="copyable">tkd login --url {{ base_url }} --token {{ t }}</pre>
+  <p>Or register the MCP server in Claude Code:</p>
+  <pre class="copyable">claude mcp add --transport http tikedenn {{ base_url }}/mcp --header "Authorization: Bearer {{ t }}"</pre>
+</div>
+{% endif %}
+
+<form method="post" action="/settings/tokens" class="rowform">
+  <input name="name" placeholder="Token name, e.g. claude@laptop" required maxlength="64" pattern="[A-Za-z0-9@._\-]+" class="grow">
+  <select name="scope">
+    <option value="write">Read &amp; write</option>
+    <option value="read">Read only</option>
+  </select>
+  <button type="submit">Create token</button>
+</form>
+
+{% if tokens.is_empty() %}
+<p class="empty">No token yet.</p>
+{% else %}
+<table class="user-list">
+  <tr><th>Name</th><th>Scope</th><th>Created</th><th>Last used</th><th></th></tr>
+  {% for t in tokens %}
+  <tr>
+    <td>{{ t.name }}</td>
+    <td>{{ t.scope }}</td>
+    <td>{{ t.created_at }}</td>
+    <td>{% if let Some(u) = t.last_used_at %}{{ u }}{% else %}never{% endif %}</td>
+    <td>
+      <form method="post" action="/settings/tokens/{{ t.id }}/delete" onsubmit="return confirm('Revoke this token? Agents using it will lose access.')">
+        <button class="linklike danger">Revoke</button>
+      </form>
+    </td>
+  </tr>
+  {% endfor %}
+</table>
+{% endif %}
+
+<h2>Setup</h2>
+<ol class="setup">
+  <li>Install the CLI from the Tikedenn repository: <code>cargo install --path cli</code> (binary <code>tkd</code>).</li>
+  <li><code>tkd login --url {{ base_url }} --token &lt;token&gt;</code>, then <code>tkd install-skill</code>
+      (teaches Claude Code and pi the task protocol).</li>
+  <li>In the <em>Projects</em> page, set each project's git repository (the worker finds the local clone
+      whose <code>origin</code> matches, under <code>repos_root</code> — default <code>~/Repos</code>),
+      its base branch and its <code>publish</code> name.</li>
+  <li>Run <code>tkd worker</code> (options: <code>--agent claude|pi</code>, <code>--max-parallel</code>, <code>--no-deploy</code>).
+      It claims <em>To do</em> tasks, runs an agent in a git worktree per task, and deploys the tasks you approve.</li>
+</ol>
+{% endblock %}

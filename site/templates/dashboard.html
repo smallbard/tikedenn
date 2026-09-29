@@ -18,48 +18,49 @@
 {% include "board_frag.html" %}
 
 <!-- Drag & drop : glisser une carte sur une colonne change son état
-     (POST /tasks/{id}/move). -->
+     (POST /tasks/{id}/move). Événements délégués au document : le tableau
+     est remplacé à chaque rafraîchissement htmx. -->
 <script>
 (function () {
-  var board = document.getElementById('board');
-  if (!board) return;
-  board.addEventListener('dragstart', function (e) {
-    var card = e.target.closest('.card.task');
+  function colOf(e) { return e.target.closest && e.target.closest('#board .col'); }
+  document.addEventListener('dragstart', function (e) {
+    var card = e.target.closest && e.target.closest('#board .card.task');
     if (!card) return;
     e.dataTransfer.setData('text/plain', card.dataset.id);
     e.dataTransfer.effectAllowed = 'move';
     card.classList.add('dragging');
   });
-  board.addEventListener('dragend', function (e) {
-    var card = e.target.closest('.card.task');
+  document.addEventListener('dragend', function (e) {
+    var card = e.target.closest && e.target.closest('.card.task');
     if (card) card.classList.remove('dragging');
   });
-  board.querySelectorAll('.col').forEach(function (col) {
-    col.addEventListener('dragover', function (e) {
-      e.preventDefault();
-      e.dataTransfer.dropEffect = 'move';
-      col.classList.add('drag-over');
+  document.addEventListener('dragover', function (e) {
+    var col = colOf(e);
+    if (!col) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    col.classList.add('drag-over');
+  });
+  document.addEventListener('dragleave', function (e) {
+    var col = colOf(e);
+    if (col && !col.contains(e.relatedTarget)) col.classList.remove('drag-over');
+  });
+  document.addEventListener('drop', async function (e) {
+    var col = colOf(e);
+    if (!col) return;
+    e.preventDefault();
+    col.classList.remove('drag-over');
+    var id = e.dataTransfer.getData('text/plain');
+    if (!id) return;
+    var body = new URLSearchParams();
+    body.set('status', col.dataset.status);
+    var r = await fetch('/tasks/' + id + '/move', {
+      method: 'post',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: body.toString(),
     });
-    col.addEventListener('dragleave', function (e) {
-      if (!col.contains(e.relatedTarget)) col.classList.remove('drag-over');
-    });
-    col.addEventListener('drop', async function (e) {
-      e.preventDefault();
-      col.classList.remove('drag-over');
-      var id = e.dataTransfer.getData('text/plain');
-      if (!id) return;
-      var card = document.querySelector('.card.task[data-id="' + id + '"]');
-      var body = new URLSearchParams();
-      body.set('status', col.dataset.status);
-      body.set('filter', card ? card.dataset.filter : 0);
-      var r = await fetch('/tasks/' + id + '/move', {
-        method: 'post',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: body.toString(),
-      });
-      if (r.ok) location.reload();
-      else alert('Move failed.');
-    });
+    if (r.ok) location.reload();
+    else alert((await r.text()) || 'Move failed.');
   });
 })();
 </script>

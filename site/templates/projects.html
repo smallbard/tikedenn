@@ -8,11 +8,13 @@
   <input name="name" placeholder="Project name" required maxlength="64" class="grow">
   <input name="git_repo" placeholder="Git repository URL (optional)" class="grow">
   <input name="git_token" type="password" placeholder="Your git token for private repo (optional)" autocomplete="new-password" maxlength="256" class="grow">
+  <input name="default_branch" placeholder="Base branch (default: main)" maxlength="200">
+  <input name="publish_name" placeholder="publish name (optional)" maxlength="64">
   <button type="submit">Add</button>
 </form>
 
 {% if projects.is_empty() %}
-<p class="empty">No project yet. Projects are shared by all users; they group tasks on the board and link to a git repository.</p>
+<p class="empty">No project yet. Projects are shared by all users; they group tasks on the board and link to a git repository. The agents' worker finds the matching local clone by its git remote.</p>
 {% else %}
 <div class="projects">
   {% for p in projects %}
@@ -36,6 +38,8 @@
       <label class="field"><span>Name</span><input name="name" value="{{ p.name }}" required maxlength="64" class="grow"></label>
       <label class="field"><span>Git repository</span><input name="git_repo" value="{{ p.git_repo }}" placeholder="Git repository URL" class="grow"></label>
       <label class="field"><span>Git token</span><input name="git_token" type="password" placeholder="Leave empty to keep the current token" autocomplete="new-password" maxlength="256" class="grow"></label>
+      <label class="field"><span>Base branch</span><input name="default_branch" value="{{ p.default_branch }}" placeholder="main (or master)" maxlength="200"></label>
+      <label class="field" title="Deploy step: the worker runs `publish <name>` after merging an approved task"><span>Publish name</span><input name="publish_name" value="{{ p.publish_name }}" placeholder="none" maxlength="64"></label>
       <button type="submit">Save</button>
     </form>
     <form method="post" action="/projects/{{ p.id }}/delete" class="rowform"

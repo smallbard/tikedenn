@@ -1,44 +1,106 @@
 {% extends "base.html" %}
-{% block title %}Edit task — Tikedenn{% endblock %}
+{% block title %}#{{ task.id }} {{ task.title }} — Tikedenn{% endblock %}
 {% block content %}
 <div class="page-head">
-  <h1>Edit task</h1>
+  <h1>#{{ task.id }} <small class="st-label st-{{ task.status }}">{{ task.status }}</small></h1>
   <a class="linklike" href="/dashboard?project={{ filter }}">← Back to the board</a>
   {% if !task.branch.is_empty() %}
-  <a class="linklike" href="/tasks/{{ task.id }}/diff">View branch diff (vs main)</a>
+  <a class="linklike" href="/tasks/{{ task.id }}/diff">View branch diff</a>
   {% endif %}
 </div>
 
 {% if let Some(e) = error %}<p class="error">{{ e }}</p>{% endif %}
+
+{% if task.status == "review" %}
+{% include "review_panel.html" %}
+{% endif %}
+
+{% if !task.claimed_by.is_empty() %}
+<div class="claim-box">
+  {% if task.claim_active %}🤖 Claimed by <strong>{{ task.claimed_by }}</strong>{% if let Some(u) = task.claimed_until %} until {{ u }} UTC{% endif %}.
+  {% else %}⚠ The lease of <strong>{{ task.claimed_by }}</strong> expired: an agent can take the task over.{% endif %}
+  <form method="post" action="/tasks/{{ task.id }}/release" class="inline">
+    <input type="hidden" name="filter" value="{{ filter }}">
+    <button type="submit" class="linklike">Release</button>
+  </form>
+</div>
+{% endif %}
+{% if !task.blocked_by.is_empty() %}
+<p class="claim-box">⛔ Blocked by #{{ task.blocked_text() }} (agents will not take it before they are done).</p>
+{% endif %}
 
 <form method="post" action="/tasks/{{ task.id }}" class="new-task">
   <input type="hidden" name="filter" value="{{ filter }}">
   <label>Title
     <input name="title" value="{{ task.title }}" required maxlength="200" autofocus>
   </label>
-  <label>Project
-    <select name="project">
-      <option value="0">No project</option>
-      {% for p in projects %}
-      <option value="{{ p.id }}" {% if p.id == task.project_id_or_zero() %}selected{% endif %}>{{ p.name }}</option>
-      {% endfor %}
-    </select>
-  </label>
-  <label>Git branch (optional, e.g. feature/my-change)
+  <div class="field-row">
+    <label>Project
+      <select name="project">
+        <option value="0">No project</option>
+        {% for p in projects %}
+        <option value="{{ p.id }}" {% if p.id == task.project_id_or_zero() %}selected{% endif %}>{{ p.name }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>Priority
+      <select name="priority">
+        {% for p in priorities %}
+        <option value="{{ loop.index0 }}" {% if task.is_priority(loop.index0) %}selected{% endif %}>{{ p }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>Depends on (task ids)
+      <input name="depends_on" value="{{ task.depends_on_text() }}" placeholder="e.g. 12, 15">
+    </label>
+  </div>
+  <label>Git branch (optional — agents create task/{{ task.id }}-… if empty)
     <input name="branch" value="{{ task.branch }}" maxlength="200">
   </label>
   <label>Description / full specification
     <textarea name="description" rows="8">{{ task.description }}</textarea>
   </label>
+  <label>Acceptance criteria (what the review will check)
+    <textarea name="acceptance" rows="4">{{ task.acceptance }}</textarea>
+  </label>
   <div class="form-actions">
     <button type="submit">Save</button>
     <div class="status-buttons">
       {% for s in statuses %}
-      <button type="submit" name="status" value="{{ s.value }}" class="st-{{ s.value }}{% if s.value == task.status %} st-current{% endif %}" title="Move to {{ s.label }}">{{ s.label }}</button>
+      <button type="submit" name="status" value="{{ s.value }}" class="st-{{ s.value }}{% if s.value == task.status %} st-current{% endif %}" title="Save and move to {{ s.label }}">{{ s.label }}</button>
       {% endfor %}
     </div>
   </div>
+  {% if let Some(by) = task.created_by %}<p class="empty">Created by {{ by }} on {{ task.created_at }} UTC.</p>{% endif %}
 </form>
+
+<section class="log-section">
+  <h2>Activity</h2>
+  {% for l in task.log %}
+  {% if l.kind == "move" || l.kind == "claim" %}
+  <div class="log-entry log-{{ l.kind }} log-compact">
+    <span class="log-meta">{{ l.created_at }} · <strong>{{ l.author }}</strong>{% if let Some(a) = l.agent %} <span class="agent">🤖 {{ a }}</span>{% endif %}</span>
+    {{ l.body }}
+  </div>
+  {% else %}
+  <div class="log-entry log-{{ l.kind }}">
+    <div class="log-meta"><strong>{{ l.author }}</strong>{% if let Some(a) = l.agent %} <span class="agent">🤖 {{ a }}</span>{% endif %} · {{ l.kind }} · {{ l.created_at }} UTC</div>
+    {% if l.kind == "deploy" %}
+    <details><summary>Deploy log</summary><pre class="log-body">{{ l.body }}</pre></details>
+    {% else %}
+    <div class="log-body">{{ l.body }}</div>
+    {% endif %}
+  </div>
+  {% endif %}
+  {% else %}
+  <p class="empty">No activity yet.</p>
+  {% endfor %}
+  <form method="post" action="/tasks/{{ task.id }}/comments" class="comment-form">
+    <input type="hidden" name="filter" value="{{ filter }}">
+    <textarea name="body" rows="3" required placeholder="Add a comment (agents read the log)"></textarea>
+    <button type="submit">Comment</button>
+  </form>
+</section>
 
 <section class="files-section">
   <h2>Files</h2>
@@ -65,7 +127,7 @@
 </section>
 
 <form method="post" action="/tasks/{{ task.id }}/delete" class="delete-task"
-      onsubmit="return confirm('Delete this task and its files?')">
+      onsubmit="return confirm('Delete this task, its files and its log?')">
   <input type="hidden" name="filter" value="{{ filter }}">
   <button type="submit" class="linklike danger">Delete this task</button>
 </form>

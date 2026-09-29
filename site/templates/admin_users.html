@@ -19,7 +19,7 @@
     </td>
     <td>
       {% if !u.is_self %}
-      <form method="post" action="/admin/users/{{ u.id }}/delete" onsubmit="return confirm('Delete this user? All of their data (tasks, files, git tokens) will be lost.')">
+      <form method="post" action="/admin/users/{{ u.id }}/delete" onsubmit="return confirm('Delete this user? Their git and API tokens will be deleted; the tasks they created stay on the shared board.')">
         <button class="linklike danger">Delete</button>
       </form>
       {% endif %}

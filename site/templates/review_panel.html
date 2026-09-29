@@ -1,0 +1,31 @@
+<!-- Panneau de revue humaine (tâche en « review ») : dernier rapport de
+     l'agent, critères d'acceptation, approbation ou demande de modifications. -->
+<section class="review-panel">
+  <h2>Human review</h2>
+  {% if let Some(r) = task.last_report() %}
+  <div class="log-entry log-report">
+    <div class="log-meta"><strong>{{ r.author }}</strong>{% if let Some(a) = r.agent %} <span class="agent">🤖 {{ a }}</span>{% endif %} · report · {{ r.created_at }} UTC</div>
+    <div class="log-body">{{ r.body }}</div>
+  </div>
+  {% else %}
+  <p class="empty">No report from an agent yet.</p>
+  {% endif %}
+  {% if !task.acceptance.is_empty() %}
+  <details open class="acceptance">
+    <summary>Acceptance criteria</summary>
+    <div class="log-body">{{ task.acceptance }}</div>
+  </details>
+  {% endif %}
+  <div class="review-actions">
+    <form method="post" action="/tasks/{{ task.id }}/approve">
+      <input type="hidden" name="filter" value="{{ filter }}">
+      <textarea name="body" rows="2" placeholder="Optional comment"></textarea>
+      <button type="submit" class="approve">Approve → deploy</button>
+    </form>
+    <form method="post" action="/tasks/{{ task.id }}/request-changes">
+      <input type="hidden" name="filter" value="{{ filter }}">
+      <textarea name="body" rows="2" required placeholder="Which changes are needed? (the agent will read this)"></textarea>
+      <button type="submit" class="reject">Request changes → todo</button>
+    </form>
+  </div>
+</section>

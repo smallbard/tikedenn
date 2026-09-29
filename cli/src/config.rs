@@ -14,7 +14,7 @@
 //! max_parallel = 1
 //! poll_seconds = 60
 //! agent_timeout_minutes = 120
-//! claude_command = ["claude", "-p", "{prompt}", "--permission-mode", "acceptEdits"]
+//! claude_command = ["claude", "-p", "{prompt}", "--dangerously-skip-permissions"]
 //! pi_command = ["pi", "-p", "{prompt}"]
 //! publish_command = ["publish"]
 //! ```
@@ -62,17 +62,15 @@ impl Default for WorkerConfig {
             poll_seconds: 60,
             agent_timeout_minutes: 120,
             work_dir: "~/.cache/tikedenn".into(),
-            // Headless : les éditions sont acceptées, git et tkd autorisés ;
-            // les règles .claude/settings.json du dépôt s'ajoutent. Pour une
-            // machine isolée : "--dangerously-skip-permissions".
+            // Headless sans aucune demande de permission : l'agent doit
+            // pouvoir lancer les tests, les builds… dans son worktree. Pour
+            // restreindre : "--permission-mode", "acceptEdits",
+            // "--allowedTools", "Bash(git:*),Bash(tkd:*)".
             claude_command: vec![
                 "claude".into(),
                 "-p".into(),
                 "{prompt}".into(),
-                "--permission-mode".into(),
-                "acceptEdits".into(),
-                "--allowedTools".into(),
-                "Bash(git:*),Bash(tkd:*)".into(),
+                "--dangerously-skip-permissions".into(),
             ],
             pi_command: vec!["pi".into(), "-p".into(), "{prompt}".into()],
             publish_command: vec!["publish".into()],

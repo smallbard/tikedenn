@@ -119,9 +119,12 @@ Configuration : `~/.config/tikedenn/config.toml` (voir l'en-tête de
 `cli/src/config.rs`) — commandes des agents (`claude_command`, `pi_command`,
 avec `{prompt}`), `max_parallel`, `agent_timeout_minutes`, `work_dir`
 (worktrees et journaux, défaut `~/.cache/tikedenn`), `publish_command`.
-Par défaut Claude Code tourne en `--permission-mode acceptEdits` avec
-`git` et `tkd` autorisés (plus les règles `.claude/settings.json` du dépôt) :
-élargir `claude_command` pour qu'il puisse lancer les tests.
+Par défaut Claude Code tourne avec `--dangerously-skip-permissions` (aucune
+demande de permission : il peut lancer tests et builds dans son worktree, mais
+aussi n'importe quelle commande avec les droits de l'utilisateur — à réserver
+à une machine de confiance). Pour restreindre : `claude_command = ["claude",
+"-p", "{prompt}", "--permission-mode", "acceptEdits", "--allowedTools",
+"Bash(git:*),Bash(tkd:*)"]`.
 
 ## Développement
 

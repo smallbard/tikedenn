@@ -156,6 +156,7 @@ pub fn op_create_task(conn: &Connection, actor: &Actor, c: &CreateTask) -> ApiRe
             branch,
             depends_on: vec![],
         },
+        "draft",
     )?;
     op_get_task(conn, actor, id)
 }

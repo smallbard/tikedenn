@@ -33,8 +33,9 @@
   <input name="branch" placeholder="Git branch (optional — agents create task/<id>-… if empty)" maxlength="200" class="grow">
   <textarea name="description" rows="6" placeholder="Description / full specification (what the agent must do)"></textarea>
   <textarea name="acceptance" rows="3" placeholder="Acceptance criteria (what the review will check)"></textarea>
-  <button type="submit">Create in Draft</button>
+  <button type="submit" name="status" value="draft">Create in Draft</button>
+  <button type="submit" name="status" value="todo">Create in To do</button>
   <a class="linklike" href="/dashboard?project={{ selected_project }}">Cancel</a>
 </form>
-<p class="empty">Tasks start in Draft; move them to <em>To do</em> when they are ready for an agent.</p>
+<p class="empty">Create in Draft to keep refining the task, or directly in <em>To do</em> when it is ready for an agent.</p>
 {% endblock %}

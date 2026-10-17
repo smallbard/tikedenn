@@ -626,11 +626,12 @@ fn validate_form(conn: &Connection, task_id: i64, f: &TaskForm) -> rusqlite::Res
     }))
 }
 
-/// Insère une tâche en draft (UI ou API) et journalise sa création.
-pub fn insert_task(conn: &Connection, actor: &Actor, t: &ValidTask) -> rusqlite::Result<i64> {
+/// Insère une tâche dans l'état initial `status` (`draft`, ou `todo` pour un
+/// humain depuis l'UI) et journalise sa création.
+pub fn insert_task(conn: &Connection, actor: &Actor, t: &ValidTask, status: &str) -> rusqlite::Result<i64> {
     conn.execute(
         "INSERT INTO tasks (user_id, project_id, status, priority, branch, title, description, acceptance)
-         VALUES (?1, ?2, 'draft', ?3, ?4, ?5, ?6, ?7)",
+         VALUES (?1, ?2, ?8, ?3, ?4, ?5, ?6, ?7)",
         rusqlite::params![
             actor.user().id,
             t.project_id,
@@ -638,16 +639,18 @@ pub fn insert_task(conn: &Connection, actor: &Actor, t: &ValidTask) -> rusqlite:
             t.branch,
             t.title,
             t.description,
-            t.acceptance
+            t.acceptance,
+            status
         ],
     )?;
     let id = conn.last_insert_rowid();
     save_deps(conn, id, &t.depends_on)?;
-    workflow::log(conn, id, actor, "move", "Created in draft")?;
+    workflow::log(conn, id, actor, "move", &format!("Created in {status}"))?;
     Ok(id)
 }
 
-/// Création d'une tâche : toujours en draft. Redirige vers le tableau.
+/// Création d'une tâche : en draft, ou directement en todo (bouton
+/// « Create in To do », `status=todo`). Redirige vers le tableau.
 pub async fn create_task(
     State(state): State<AppState>,
     Extension(user): Extension<CurrentUser>,
@@ -661,7 +664,8 @@ pub async fn create_task(
             return Ok(redirect_with_error(&url, Some(&msg)));
         }
     };
-    insert_task(&conn, &Actor::Human(user), &t)?;
+    let status = if f.status == "todo" { "todo" } else { "draft" };
+    insert_task(&conn, &Actor::Human(user), &t, status)?;
     Ok(redirect_dashboard(f.filter))
 }
 

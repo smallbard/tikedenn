@@ -292,16 +292,17 @@ pub fn fetch_tasks(conn: &Connection, user_id: i64, f: &TaskFilter) -> rusqlite:
 }
 
 /// Trie les tâches par état, puis dans chaque colonne :
-/// - draft : priorité, puis la plus récente ;
-/// - todo : ordre de traitement (`order::Graph::todo_plan`), annoté du rang,
-///   de la prochaine tâche des agents et du début des tâches en attente ;
+/// - draft et todo : ordre de traitement (`order::Graph::plan`), annoté du
+///   début des tâches en attente ; en todo, aussi du rang et de la prochaine
+///   tâche des agents ;
 /// - progress, review : arrivée dans l'état (la plus ancienne en haut) ;
 /// - deploy : priorité puis approbation, comme le worker ;
 /// - done : la plus récemment terminée en haut.
 fn order_tasks(conn: &Connection, tasks: &mut [TaskRow]) -> rusqlite::Result<()> {
     let graph = order::Graph::load(conn)?;
     let eff = graph.effective();
-    let plan: HashMap<i64, usize> = graph.todo_plan(&eff).into_iter().enumerate().map(|(i, id)| (id, i)).collect();
+    let plan_of = |status| -> HashMap<i64, usize> { graph.plan(status, &eff).into_iter().enumerate().map(|(i, id)| (id, i)).collect() };
+    let (plan, draft_plan) = (plan_of("todo"), plan_of("draft"));
     for t in tasks.iter_mut() {
         if let Some(e) = eff.get(&t.id) {
             t.eff_priority = e.priority;
@@ -311,7 +312,7 @@ fn order_tasks(conn: &Connection, tasks: &mut [TaskRow]) -> rusqlite::Result<()>
     let column = |s: &str| STATUSES.iter().position(|c| c.value == s).unwrap_or(STATUSES.len());
     tasks.sort_by_key(|t| {
         let key = match t.status.as_str() {
-            "draft" => (-t.priority, -t.id, 0),
+            "draft" => (draft_plan.get(&t.id).map_or(i64::MAX, |&i| i as i64), 0, 0),
             "todo" => (plan.get(&t.id).map_or(i64::MAX, |&i| i as i64), 0, 0),
             "deploy" => (-t.priority, t.state_seq, t.id),
             "done" => (-t.state_seq, -t.id, 0),
@@ -319,6 +320,14 @@ fn order_tasks(conn: &Connection, tasks: &mut [TaskRow]) -> rusqlite::Result<()>
         };
         (column(&t.status), key)
     });
+    // Séparateur « en attente » en draft et en todo ; rang et « next » en todo.
+    let mut draft_waiting_found = false;
+    for t in tasks.iter_mut().filter(|t| t.status == "draft") {
+        if !graph.is_ready(t.id) && !draft_waiting_found {
+            t.first_waiting = true;
+            draft_waiting_found = true;
+        }
+    }
     let (mut rank, mut next_found, mut waiting_found) = (0, false, false);
     for t in tasks.iter_mut().filter(|t| t.status == "todo") {
         rank += 1;

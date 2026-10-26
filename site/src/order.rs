@@ -5,10 +5,11 @@
 //!   tâches qui attendent après elle (transitivement), sinon une tâche urgente
 //!   resterait bloquée derrière une dépendance de priorité basse. Les
 //!   brouillons ne transmettent pas leur priorité (ils ne sont pas prêts).
-//! - **Plan de la colonne todo** : d'abord les tâches prêtes (dépendances
-//!   terminées), dans l'ordre où les agents les prendront (priorité
-//!   effective, puis la plus ancienne) ; puis celles qui attendent, triées
-//!   topologiquement : une tâche vient toujours après ses dépendances.
+//! - **Plan d'une colonne** (todo, et draft de la même façon) : d'abord les
+//!   tâches prêtes (dépendances terminées), dans l'ordre où les agents les
+//!   prendront (priorité effective, puis la plus ancienne) ; puis celles qui
+//!   attendent, triées topologiquement : une tâche vient toujours après ses
+//!   dépendances.
 
 use rusqlite::Connection;
 use std::cmp::Reverse;
@@ -94,16 +95,17 @@ impl Graph {
         best
     }
 
-    /// Ordre de traitement des tâches `todo` (voir l'en-tête du module).
-    pub fn todo_plan(&self, eff: &HashMap<i64, Effective>) -> Vec<i64> {
-        let in_todo = |id: &i64| self.nodes.get(id).is_some_and(|n| n.status == "todo");
-        // Seules les dépendances entre tâches todo contraignent l'ordre ; une
-        // dépendance déjà en cours (ou ailleurs) finira avant.
+    /// Ordre des tâches d'une colonne (`todo` : ordre de traitement des
+    /// agents ; voir l'en-tête du module).
+    pub fn plan(&self, status: &str, eff: &HashMap<i64, Effective>) -> Vec<i64> {
+        let in_col = |id: &i64| self.nodes.get(id).is_some_and(|n| n.status == status);
+        // Seules les dépendances internes à la colonne contraignent l'ordre ;
+        // une dépendance ailleurs (déjà en cours…) n'impose rien ici.
         let mut waiting_on: HashMap<i64, usize> = self
             .nodes
             .iter()
-            .filter(|(_, n)| n.status == "todo")
-            .map(|(&id, n)| (id, n.deps.iter().filter(|d| in_todo(d)).count()))
+            .filter(|(_, n)| n.status == status)
+            .map(|(&id, n)| (id, n.deps.iter().filter(|d| in_col(d)).count()))
             .collect();
         let key = |id: i64| (self.is_ready(id), eff[&id].priority, Reverse(id));
         let mut heap: BinaryHeap<_> = waiting_on.iter().filter(|(_, &n)| n == 0).map(|(&id, _)| key(id)).collect();
@@ -172,8 +174,22 @@ mod tests {
         );
         let eff = g.effective();
         // Prêtes : 3 (hérite d'urgent), 6, 1 ; puis en attente : 2 (urgente), 4 (high).
-        assert_eq!(g.todo_plan(&eff), vec![3, 6, 1, 2, 4]);
+        assert_eq!(g.plan("todo", &eff), vec![3, 6, 1, 2, 4]);
         assert!(g.is_ready(3) && !g.is_ready(2) && !g.is_ready(4));
+    }
+
+    #[test]
+    fn drafts_are_planned_like_todo() {
+        // 1 draft low prête ; 2 draft urgente dépend de 3 (draft) ; 4 draft
+        // dépend de 5 (todo) ; 6 todo ignorée.
+        let (_c, g) = graph(
+            "INSERT INTO tasks (id, title, status, priority) VALUES
+                (1, 'a', 'draft', 0), (2, 'b', 'draft', 3), (3, 'c', 'draft', 1),
+                (4, 'd', 'draft', 2), (5, 'e', 'todo', 1), (6, 'f', 'todo', 3);
+             INSERT INTO task_deps VALUES (2, 3), (4, 5);",
+        );
+        let eff = g.effective();
+        assert_eq!(g.plan("draft", &eff), vec![3, 1, 2, 4]);
     }
 
     #[test]

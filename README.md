@@ -151,7 +151,12 @@ sudo loginctl enable-linger "$USER"             # démarrage au boot, même sans
 ```
 
 - Journaux du worker : `journalctl --user -u tikedenn-worker -f` ; sortie de
-  chaque agent : `~/.cache/tikedenn/logs/`.
+  chaque agent : `~/.cache/tikedenn/logs/`, en direct avec `tkd logs <id> -f`
+  (`tkd logs` liste les journaux récents, `--deploy` pour celui du
+  déploiement). Claude Code est lancé avec `--output-format stream-json`
+  (ajouté automatiquement si la configuration ne précise pas de format) :
+  chaque message, outil appelé et résultat y devient une ligne horodatée
+  depuis le lancement.
 - Options (`--agent pi`, `--max-parallel 2`, `--no-deploy`…) : sur la ligne
   `ExecStart`, ou dans `[worker]` de `~/.config/tikedenn/config.toml`.
 - Le `PATH` du service doit contenir `tkd`, `claude`, `publish` et, pour pi,

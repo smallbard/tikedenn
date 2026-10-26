@@ -14,7 +14,8 @@
 //! max_parallel = 1
 //! poll_seconds = 60
 //! agent_timeout_minutes = 120
-//! claude_command = ["claude", "-p", "{prompt}", "--dangerously-skip-permissions"]
+//! claude_command = ["claude", "-p", "{prompt}", "--dangerously-skip-permissions",
+//!                   "--output-format", "stream-json", "--verbose"]   # journal en direct
 //! pi_command = ["pi", "-p", "{prompt}"]
 //! publish_command = ["publish"]
 //! ```
@@ -71,6 +72,11 @@ impl Default for WorkerConfig {
                 "-p".into(),
                 "{prompt}".into(),
                 "--dangerously-skip-permissions".into(),
+                // Événements au fil de l'eau, mis en forme dans le journal
+                // (ajoutés aussi aux anciennes configurations, voir agent_log).
+                "--output-format".into(),
+                "stream-json".into(),
+                "--verbose".into(),
             ],
             pi_command: vec!["pi".into(), "-p".into(), "{prompt}".into()],
             publish_command: vec!["publish".into()],

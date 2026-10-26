@@ -3,10 +3,12 @@
 //! revue, et `tkd worker` pour faire travailler des agents sur les tâches
 //! « todo » puis déployer celles qu'un humain a approuvées.
 
+mod agent_log;
 mod client;
 mod config;
 mod deploy;
 mod git;
+mod logs;
 mod render;
 mod worker;
 
@@ -182,6 +184,16 @@ enum Cmd {
         #[arg(long)]
         once: bool,
     },
+    /// Show the worker log of a task's agent (latest run); without id, list recent logs.
+    Logs {
+        id: Option<i64>,
+        /// Keep printing new lines as the agent works.
+        #[arg(short, long)]
+        follow: bool,
+        /// The deploy log instead of the agent log.
+        #[arg(long)]
+        deploy: bool,
+    },
     /// Install the `tikedenn` skill for Claude Code (~/.claude/skills) and pi (~/.pi/agent/skills).
     InstallSkill,
 }
@@ -273,6 +285,7 @@ fn run(cli: Cli) -> Result<()> {
             println!("Logged in as {}/{} ({}) — saved to {}", me.username, me.token, me.scope, path.display());
         }
         Cmd::InstallSkill => install_skill()?,
+        Cmd::Logs { id, follow, deploy } => logs::run(&cfg, id, follow, deploy)?,
         cmd => {
             let client = Client::new(&cfg)?;
             run_api(cmd, &cfg, &client, json)?;
@@ -457,7 +470,7 @@ fn run_api(cmd: Cmd, cfg: &Config, client: &Client, json: bool) -> Result<()> {
             };
             worker::run(cfg.clone(), opts)?;
         }
-        Cmd::Login { .. } | Cmd::InstallSkill => unreachable!(),
+        Cmd::Login { .. } | Cmd::InstallSkill | Cmd::Logs { .. } => unreachable!(),
     }
     Ok(())
 }

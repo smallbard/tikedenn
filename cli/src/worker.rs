@@ -3,6 +3,7 @@
 //! tâche, renouvelle la prise en charge pendant qu'il travaille, et déploie
 //! (merge + publish) les tâches approuvées par un humain.
 
+use crate::agent_log;
 use crate::client::{status_of, Client};
 use crate::config::{tail_file, Config};
 use crate::deploy;
@@ -178,7 +179,7 @@ fn run_task(ctx: &Ctx, agent: &str, task: TaskDetail, project: Project, repo: Pa
     let task = ctx.client.task(id)?;
 
     let prompt = agent_prompt(&task, &branch, &base);
-    let cmd: Vec<String> = agent_command(&ctx.cfg, agent)?
+    let cmd: Vec<String> = agent_log::ensure_streaming(agent_command(&ctx.cfg, agent)?)
         .into_iter()
         .map(|a| a.replace("{prompt}", &prompt))
         .collect();
@@ -195,10 +196,18 @@ fn run_task(ctx: &Ctx, agent: &str, task: TaskDetail, project: Project, repo: Pa
         .current_dir(&wt)
         .env("TIKEDENN_TASK", id.to_string())
         .stdin(Stdio::null())
-        .stdout(log.try_clone()?)
-        .stderr(log)
+        .stdout(Stdio::piped())
+        .stderr(log.try_clone()?)
         .spawn()
         .with_context(|| format!("Could not start {}", cmd[0]))?;
+    // Sortie mise en forme au fil de l'eau (suivre avec `tkd logs <id> -f`).
+    let started = Instant::now();
+    let stdout = child.stdout.take().context("No agent output")?;
+    let (pumped_tx, pumped) = std::sync::mpsc::channel();
+    thread::spawn(move || {
+        agent_log::pump(stdout, log, started);
+        let _ = pumped_tx.send(());
+    });
 
     let timeout = Duration::from_secs(ctx.cfg.worker.agent_timeout_minutes * 60);
     let renew_every = Duration::from_secs(CLAIM_TTL_MINUTES as u64 * 60 / 3);
@@ -237,6 +246,8 @@ fn run_task(ctx: &Ctx, agent: &str, task: TaskDetail, project: Project, repo: Pa
         thread::sleep(Duration::from_secs(5));
     };
 
+    // Fin du journal (un processus lancé par l'agent peut garder la sortie ouverte).
+    let _ = pumped.recv_timeout(Duration::from_secs(5));
     if let Outcome::Lost(reason) = &outcome {
         println!("[#{id}] stopped: the task was taken over ({reason}).");
         return Ok(());

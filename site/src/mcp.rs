@@ -46,6 +46,14 @@ fn tools() -> Vec<(&'static str, &'static str, Value, bool)> {
          json!({"type": "object", "properties": {"id": id, "ttl_minutes": {"type": "integer"}}, "required": ["id"]}), true),
         ("set_branch", "Set the git branch of a task (e.g. task/42-short-title).",
          json!({"type": "object", "properties": {"id": id, "branch": {"type": "string"}}, "required": ["id", "branch"]}), true),
+        ("update_task", "Update fields of a task; only the given fields change. Every change is recorded in the task log.",
+         json!({"type": "object", "properties": {
+             "id": id, "title": {"type": "string"}, "description": {"type": "string"}, "acceptance": {"type": "string"},
+             "project": {"type": "string", "description": "Project id or name; empty = no project"},
+             "priority": {"type": "integer", "description": "0 low, 1 normal, 2 high, 3 urgent"},
+             "branch": {"type": "string"},
+             "depends_on": {"type": "array", "items": {"type": "integer"}, "description": "Replaces all dependencies (empty = none)"}},
+             "required": ["id"]}), true),
         ("add_comment", "Add a note to the task log (progress note, question…).",
          json!({"type": "object", "properties": {"id": id, "body": {"type": "string"}}, "required": ["id", "body"]}), true),
         ("submit_for_review", "Move your task to review with a report: what changed, how it was tested, open questions. The branch must be pushed first.",
@@ -93,7 +101,7 @@ fn call_tool(state: &AppState, actor: &Actor, name: &str, args: &Value) -> Resul
         "get_task" => to_value(api::op_get_task(conn, actor, arg_id(args)?)),
         "claim_next_task" => to_value(api::op_claim_next(conn, actor, &parse::<ClaimNext>(args)?)),
         "claim_task" => to_value(api::op_claim(conn, actor, arg_id(args)?, &parse::<Claim>(args)?)),
-        "set_branch" => to_value(api::op_patch_task(conn, actor, arg_id(args)?, &parse::<PatchTask>(args)?)),
+        "set_branch" | "update_task" => to_value(api::op_patch_task(conn, actor, arg_id(args)?, &parse::<PatchTask>(args)?)),
         "add_comment" => {
             let c = NewComment { body: arg_str(args, "body").unwrap_or_default().into(), kind: None };
             api::op_comment(conn, actor, arg_id(args)?, &c).map(|_| json!({"ok": true}))

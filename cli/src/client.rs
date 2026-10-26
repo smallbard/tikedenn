@@ -104,7 +104,11 @@ impl Client {
     }
 
     pub fn set_branch(&self, id: i64, branch: &str) -> Result<TaskDetail> {
-        self.send("PATCH", &format!("/tasks/{id}"), &PatchTask { branch: Some(branch.into()) })
+        self.update(id, &PatchTask { branch: Some(branch.into()), ..Default::default() })
+    }
+
+    pub fn update(&self, id: i64, p: &PatchTask) -> Result<TaskDetail> {
+        self.send("PATCH", &format!("/tasks/{id}"), p)
     }
 
     pub fn claim(&self, id: i64, ttl_minutes: Option<i64>) -> Result<TaskDetail> {

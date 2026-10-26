@@ -161,8 +161,8 @@ pub fn op_create_task(conn: &Connection, actor: &Actor, c: &CreateTask) -> ApiRe
     op_get_task(conn, actor, id)
 }
 
-/// Seule la branche git est modifiable par un agent (la spécification
-/// reste du ressort des humains).
+/// Modifie les champs présents d'une tâche (refusé si un autre agent la
+/// détient). Chaque modification est tracée dans le journal.
 pub fn op_patch_task(conn: &Connection, actor: &Actor, id: i64, p: &PatchTask) -> ApiResult<TaskDetail> {
     let task = op_get_task(conn, actor, id)?;
     if task.summary.claim_active && task.summary.claimed_by.as_deref() != Some(&actor.claimer()) {
@@ -171,20 +171,60 @@ pub fn op_patch_task(conn: &Connection, actor: &Actor, id: i64, p: &PatchTask) -
             format!("The task is claimed by {}.", task.summary.claimed_by.unwrap_or_default()),
         ));
     }
-    if let Some(branch) = &p.branch {
-        let branch = branch.trim();
-        if !branch.is_empty() && !board::is_safe_branch(branch) {
-            return Err(ApiError::invalid("Invalid branch name."));
-        }
-        if branch != task.summary.branch {
-            conn.execute(
-                "UPDATE tasks SET branch = ?1, updated_at = datetime('now') WHERE id = ?2",
-                rusqlite::params![branch, id],
-            )?;
-            workflow::log(conn, id, actor, "comment", &format!("Branch set to `{branch}`"))?;
+    let project = match p.project.as_deref().map(str::trim) {
+        None => task.summary.project_id,
+        Some("") => None,
+        Some(key) => Some(project_id(conn, actor, key)?),
+    };
+    let title = p.title.as_deref().unwrap_or(&task.summary.title);
+    let priority = p.priority.unwrap_or(task.summary.priority);
+    let branch = p.branch.as_deref().unwrap_or(&task.summary.branch);
+    let deps = p.depends_on.clone().unwrap_or_else(|| task.depends_on.clone());
+    let (title, project, branch) =
+        board::validate_task(conn, id, title, project, priority, branch, &deps)?.map_err(ApiError::invalid)?;
+    let description = p.description.as_deref().map_or(task.description.clone(), |d| d.trim().to_string());
+    let acceptance = p.acceptance.as_deref().map_or(task.acceptance.clone(), |a| a.trim().to_string());
+
+    let mut changed = vec![];
+    for (name, differs) in [
+        ("title", title != task.summary.title),
+        ("description", description != task.description),
+        ("acceptance criteria", acceptance != task.acceptance),
+        ("project", project != task.summary.project_id),
+        ("priority", priority != task.summary.priority),
+        ("dependencies", sorted(&deps) != sorted(&task.depends_on)),
+    ] {
+        if differs {
+            changed.push(name);
         }
     }
+    let branch_changed = branch != task.summary.branch;
+    if changed.is_empty() && !branch_changed {
+        return Ok(task);
+    }
+    conn.execute(
+        "UPDATE tasks SET title = ?1, description = ?2, acceptance = ?3, project_id = ?4,
+                priority = ?5, branch = ?6, updated_at = datetime('now')
+         WHERE id = ?7",
+        rusqlite::params![title, description, acceptance, project, priority, branch, id],
+    )?;
+    if changed.contains(&"dependencies") {
+        board::save_deps(conn, id, &deps)?;
+    }
+    if branch_changed {
+        workflow::log(conn, id, actor, "comment", &format!("Branch set to `{branch}`"))?;
+    }
+    if !changed.is_empty() {
+        workflow::log(conn, id, actor, "comment", &format!("Updated {}", changed.join(", ")))?;
+    }
     op_get_task(conn, actor, id)
+}
+
+fn sorted(v: &[i64]) -> Vec<i64> {
+    let mut v = v.to_vec();
+    v.sort_unstable();
+    v.dedup();
+    v
 }
 
 pub fn op_claim(conn: &Connection, actor: &Actor, id: i64, c: &Claim) -> ApiResult<TaskDetail> {
@@ -396,4 +436,57 @@ pub async fn upload_file(
 /// Route inconnue sous /api : 404 en JSON.
 pub async fn not_found() -> ApiError {
     ApiError::not_found("API route")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::auth::CurrentUser;
+
+    fn setup() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
+        crate::db::init_app_schema(&conn).unwrap();
+        conn.execute_batch(
+            "INSERT INTO users (username, email, pass_hash) VALUES ('olivier', 'o@x', 'h');
+             INSERT INTO tasks (user_id, title, status) VALUES (1, 'a', 'todo'), (1, 'b', 'todo'), (1, 'c', 'todo');",
+        )
+        .unwrap();
+        conn
+    }
+
+    fn agent(name: &str) -> Actor {
+        let user = CurrentUser { id: 1, username: "olivier".into(), is_admin: false, to_review: 0 };
+        Actor::Agent { user, token: name.into() }
+    }
+
+    #[test]
+    fn patch_changes_only_given_fields_and_logs_them() {
+        let conn = setup();
+        let a = agent("claude");
+        let p = PatchTask {
+            description: Some(" new spec ".into()),
+            priority: Some(3),
+            depends_on: Some(vec![1, 2]),
+            ..Default::default()
+        };
+        let t = op_patch_task(&conn, &a, 3, &p).unwrap();
+        assert_eq!(t.summary.title, "c");
+        assert_eq!(t.description, "new spec");
+        assert_eq!(t.summary.priority, 3);
+        assert_eq!(t.depends_on, vec![1, 2]);
+        assert_eq!(t.log.last().unwrap().body, "Updated description, priority, dependencies");
+        // Rien ne change : pas de nouvelle entrée de journal.
+        let n = t.log.len();
+        assert_eq!(op_patch_task(&conn, &a, 3, &p).unwrap().log.len(), n);
+        // Validation : cycle, titre vide, tâche détenue par un autre agent.
+        let cycle = PatchTask { depends_on: Some(vec![3]), ..Default::default() };
+        assert!(op_patch_task(&conn, &a, 1, &cycle).is_err());
+        let empty = PatchTask { title: Some(" ".into()), ..Default::default() };
+        assert!(op_patch_task(&conn, &a, 1, &empty).is_err());
+        workflow::claim(&conn, &a, 1, None).unwrap();
+        let retitle = PatchTask { title: Some("x".into()), ..Default::default() };
+        assert!(op_patch_task(&conn, &agent("pi"), 1, &retitle).is_err());
+        assert_eq!(op_patch_task(&conn, &a, 1, &retitle).unwrap().summary.title, "x");
+    }
 }

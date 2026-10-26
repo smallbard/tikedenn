@@ -17,7 +17,7 @@ use config::Config;
 use serde::Serialize;
 use std::io::Read;
 use std::path::PathBuf;
-use tikedenn_common::api::{ClaimNext, CreateTask, TaskDetail};
+use tikedenn_common::api::{ClaimNext, CreateTask, PatchTask, TaskDetail};
 use tikedenn_common::is_valid_status;
 
 const SKILL: &str = include_str!("../../agents/tikedenn/SKILL.md");
@@ -122,6 +122,29 @@ enum Cmd {
         #[arg(long, value_delimiter = ',')]
         depends_on: Vec<i64>,
     },
+    /// Update a task: only the given fields change.
+    Update {
+        id: i64,
+        #[arg(long)]
+        title: Option<String>,
+        /// New description ("-" reads stdin).
+        #[arg(short, long)]
+        description: Option<String>,
+        /// New acceptance criteria ("-" reads stdin).
+        #[arg(short, long)]
+        acceptance: Option<String>,
+        /// Project id or name ("" = no project).
+        #[arg(long)]
+        project: Option<String>,
+        /// 0 low, 1 normal, 2 high, 3 urgent.
+        #[arg(long)]
+        priority: Option<i64>,
+        #[arg(long)]
+        branch: Option<String>,
+        /// Replaces all dependencies, e.g. --depends-on 12,15 ("" = none).
+        #[arg(long)]
+        depends_on: Option<String>,
+    },
     /// Attach a file to a task.
     Attach { id: i64, file: PathBuf },
     /// Download an attached file.
@@ -186,6 +209,15 @@ fn message(m: &str) -> Result<String> {
     } else {
         Ok(m.to_string())
     }
+}
+
+/// Liste d'ids séparés par des virgules (« 12, #15 ») ; vide = aucun.
+fn parse_ids(s: &str) -> Result<Vec<i64>> {
+    s.split(',')
+        .map(|p| p.trim().trim_start_matches('#'))
+        .filter(|p| !p.is_empty())
+        .map(|p| p.parse().with_context(|| format!("Invalid task id '{p}'")))
+        .collect()
 }
 
 /// Projet du dépôt git courant (d'après son remote origin).
@@ -357,6 +389,23 @@ fn run_api(cmd: Cmd, cfg: &Config, client: &Client, json: bool) -> Result<()> {
                 print_json(&t)?;
             } else {
                 println!("Created #{} in draft.", t.summary.id);
+            }
+        }
+        Cmd::Update { id, title, description, acceptance, project, priority, branch, depends_on } => {
+            let p = PatchTask {
+                title,
+                description: description.as_deref().map(message).transpose()?,
+                acceptance: acceptance.as_deref().map(message).transpose()?,
+                project,
+                priority,
+                branch,
+                depends_on: depends_on.as_deref().map(parse_ids).transpose()?,
+            };
+            let t = client.update(id, &p)?;
+            if json {
+                print_json(&t)?;
+            } else {
+                println!("Task #{id} updated.");
             }
         }
         Cmd::Attach { id, file } => {

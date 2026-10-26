@@ -68,7 +68,7 @@ ces transitions sont réservées aux humains (contrôlé par le serveur).
 | GET  | `/api/v1/tasks[?status=&project=]` | liste |
 | POST | `/api/v1/tasks` | proposer une tâche (créée en draft) |
 | GET  | `/api/v1/tasks/{id}` | fiche complète avec journal |
-| PATCH| `/api/v1/tasks/{id}` | `{"branch": …}` |
+| PATCH| `/api/v1/tasks/{id}` | modifier les champs fournis : `title`, `description`, `acceptance`, `project`, `priority`, `branch`, `depends_on` |
 | POST | `/api/v1/tasks/claim-next` | `{"projects": [], "status": "todo"\|"deploy"}` → tâche prise, ou 204 |
 | POST | `/api/v1/tasks/{id}/claim` | prendre / renouveler le bail |
 | POST | `/api/v1/tasks/{id}/release` | rendre la tâche |
@@ -95,7 +95,7 @@ tkd install-skill                                # skill tikedenn pour Claude Co
 
 Commandes des agents : `tkd next`, `tkd show <id>`, `tkd claim <id>`,
 `tkd comment <id> -m …`, `tkd submit <id> -m <rapport>` (pousse la branche
-si besoin puis passe en revue), `tkd release`, `tkd create`, `tkd attach`,
+si besoin puis passe en revue), `tkd release`, `tkd create`, `tkd update`, `tkd attach`,
 `tkd list`… (`--json` partout, `tkd --help`). Dans un dépôt, `tkd next` et
 `tkd list` se limitent au projet dont le remote `origin` correspond.
 

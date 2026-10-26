@@ -100,10 +100,25 @@ pub struct CreateTask {
     pub depends_on: Vec<i64>,
 }
 
+/// Modification partielle d'une tâche : seuls les champs présents changent.
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct PatchTask {
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub acceptance: Option<String>,
+    /// Id ou nom du projet ; vide = aucun projet.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub priority: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub branch: Option<String>,
+    /// Remplace toutes les dépendances (liste vide = aucune).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub depends_on: Option<Vec<i64>>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]

@@ -28,6 +28,7 @@ tkd submit <id> -m "…"    # push the current branch if needed, then move to re
 tkd release <id> -m "…"   # give the task back (→ todo) with an explanation
 tkd create "title" -d "…" # propose a follow-up task (created in draft for a human to triage)
                           #   --depends-on 12,15 : tasks that must be done before this one can be claimed
+tkd update <id> --title … -d … -a … --priority N --depends-on 12,15  # change only the given fields
 tkd attach <id> <file>    # attach a file (screenshot, log…) ; tkd download <file-id>
 tkd list [--status todo]  # list tasks
 ```

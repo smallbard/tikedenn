@@ -118,6 +118,9 @@ enum Cmd {
         /// 0 low, 1 normal, 2 high, 3 urgent.
         #[arg(long)]
         priority: Option<i64>,
+        /// Ids of tasks this one depends on (e.g. --depends-on 12,15).
+        #[arg(long, value_delimiter = ',')]
+        depends_on: Vec<i64>,
     },
     /// Attach a file to a task.
     Attach { id: i64, file: PathBuf },
@@ -338,9 +341,17 @@ fn run_api(cmd: Cmd, cfg: &Config, client: &Client, json: bool) -> Result<()> {
             let t = client.set_branch(id, &name)?;
             println!("Task #{id} branch: {}", t.summary.branch);
         }
-        Cmd::Create { title, description, acceptance, project, priority } => {
+        Cmd::Create { title, description, acceptance, project, priority, depends_on } => {
             let project = project.or_else(|| current_project(client).map(|p| p.name));
-            let c = CreateTask { title, description, acceptance, project, priority, branch: String::new() };
+            let c = CreateTask {
+                title,
+                description,
+                acceptance,
+                project,
+                priority,
+                branch: String::new(),
+                depends_on,
+            };
             let t = client.create(&c)?;
             if json {
                 print_json(&t)?;

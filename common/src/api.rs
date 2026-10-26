@@ -95,6 +95,9 @@ pub struct CreateTask {
     pub priority: Option<i64>,
     #[serde(default)]
     pub branch: String,
+    /// Ids des tâches dont celle-ci dépend (bloquent sa prise en charge).
+    #[serde(default)]
+    pub depends_on: Vec<i64>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]

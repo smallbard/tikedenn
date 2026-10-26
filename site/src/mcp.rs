@@ -56,7 +56,9 @@ fn tools() -> Vec<(&'static str, &'static str, Value, bool)> {
          json!({"type": "object", "properties": {
              "title": {"type": "string"}, "description": {"type": "string"}, "acceptance": {"type": "string"},
              "project": {"type": "string", "description": "Project id or name"},
-             "priority": {"type": "integer", "description": "0 low, 1 normal, 2 high, 3 urgent"}}, "required": ["title"]}), true),
+             "priority": {"type": "integer", "description": "0 low, 1 normal, 2 high, 3 urgent"},
+             "depends_on": {"type": "array", "items": {"type": "integer"},
+                            "description": "Ids of tasks that must be done before this one can be claimed"}}, "required": ["title"]}), true),
     ]
 }
 

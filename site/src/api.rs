@@ -143,7 +143,7 @@ pub fn op_create_task(conn: &Connection, actor: &Actor, c: &CreateTask) -> ApiRe
     };
     let priority = c.priority.unwrap_or(DEFAULT_PRIORITY);
     let (title, project_id, branch) =
-        board::validate_task(conn, 0, &c.title, project, priority, &c.branch, &[])?.map_err(ApiError::invalid)?;
+        board::validate_task(conn, 0, &c.title, project, priority, &c.branch, &c.depends_on)?.map_err(ApiError::invalid)?;
     let id = insert_task(
         conn,
         actor,
@@ -154,7 +154,7 @@ pub fn op_create_task(conn: &Connection, actor: &Actor, c: &CreateTask) -> ApiRe
             project_id,
             priority,
             branch,
-            depends_on: vec![],
+            depends_on: c.depends_on.clone(),
         },
         "draft",
     )?;

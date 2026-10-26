@@ -38,7 +38,7 @@ fn tools() -> Vec<(&'static str, &'static str, Value, bool)> {
          json!({"type": "object", "properties": {"status": {"type": "string"}, "project": {"type": "string"}}}), false),
         ("get_task", "Full task: description, acceptance criteria, branch, files, dependencies and log (comments, reports, review feedback).",
          json!({"type": "object", "properties": {"id": id}, "required": ["id"]}), false),
-        ("claim_next_task", "Claim the next available 'todo' task (highest priority first, not blocked) and return it; null if none. The claim is a lease: renew it with claim_task during long work.",
+        ("claim_next_task", "Claim the next available 'todo' task (highest priority first — a task inherits the priority of the tasks waiting for it — then oldest; blocked tasks are skipped) and return it; null if none. The claim is a lease: renew it with claim_task during long work.",
          json!({"type": "object", "properties": {
              "projects": {"type": "array", "items": {"type": "string"}, "description": "Accepted projects (ids or names); empty = all"},
              "ttl_minutes": {"type": "integer", "description": "Lease duration (default 60)"}}}), true),

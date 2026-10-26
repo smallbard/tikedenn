@@ -7,7 +7,8 @@
 use crate::auth::CurrentUser;
 use crate::projects::{fetch_projects, ProjectRow};
 use crate::web::{redirect_with_error, render, AppError, AppResult};
-use crate::workflow::{self, Actor, WfError, CLAIM_ACTIVE_SQL};
+use crate::order;
+use crate::workflow::{self, Actor, WfError, CLAIM_ACTIVE_SQL, STATE_SEQ_SQL};
 use crate::AppState;
 use askama::Template;
 use axum::{
@@ -17,8 +18,9 @@ use axum::{
 };
 use rusqlite::{Connection, OptionalExtension};
 use serde::Deserialize;
+use std::collections::HashMap;
 use tikedenn_common::api::{LogEntry, TaskDetail, TaskSummary};
-use tikedenn_common::{is_valid_status, priority_label, DEFAULT_PRIORITY, PRIORITIES};
+use tikedenn_common::{is_valid_status, priority_label, DEFAULT_PRIORITY, NO_AGENT, PRIORITIES};
 
 /// Un état du tableau (valeur en BDD + libellé affiché).
 pub struct Status {
@@ -76,6 +78,17 @@ pub struct TaskRow {
     /// Fichiers joints et journal (chargés seulement pour une tâche seule).
     pub files: Vec<FileRow>,
     pub log: Vec<LogEntry>,
+    /// Ordre d'arrivée dans l'état actuel (id du dernier changement d'état).
+    pub state_seq: i64,
+    /// Priorité effective (héritée des tâches qui attendent celle-ci) et la
+    /// tâche dont elle vient (voir `order.rs`).
+    pub eff_priority: i64,
+    pub inherited_from: Option<i64>,
+    /// Colonne todo : rang dans l'ordre de traitement (1 = première), tâche
+    /// qu'un agent prendra ensuite, première tâche en attente de dépendances.
+    pub rank: usize,
+    pub is_next: bool,
+    pub first_waiting: bool,
 }
 
 impl TaskRow {
@@ -91,6 +104,10 @@ impl TaskRow {
 
     pub fn priority_label(&self) -> &'static str {
         priority_label(self.priority)
+    }
+
+    pub fn eff_priority_label(&self) -> &'static str {
+        priority_label(self.eff_priority)
     }
 
     /// Dépendances au format du champ d'édition (« 12, 15 »).
@@ -178,7 +195,7 @@ fn task_select() -> String {
                 (SELECT group_concat(depends_on) FROM task_deps WHERE task_id = t.id),
                 (SELECT group_concat(d.depends_on) FROM task_deps d JOIN tasks o ON o.id = d.depends_on
                  WHERE d.task_id = t.id AND o.status != 'done'),
-                u.username, t.created_at, t.updated_at, p.agent
+                u.username, t.created_at, t.updated_at, p.agent, {STATE_SEQ_SQL}
          FROM tasks t LEFT JOIN projects p ON p.id = t.project_id
          LEFT JOIN project_tokens pt ON pt.project_id = p.id AND pt.user_id = ?1
          LEFT JOIN users u ON u.id = t.user_id"
@@ -231,6 +248,12 @@ fn task_from_row(r: &rusqlite::Row) -> rusqlite::Result<TaskRow> {
         updated_at: r.get(20)?,
         files: vec![],
         log: vec![],
+        state_seq: r.get(22)?,
+        eff_priority: r.get(8)?,
+        inherited_from: None,
+        rank: 0,
+        is_next: false,
+        first_waiting: false,
     })
 }
 
@@ -252,18 +275,66 @@ pub struct TaskFilter<'a> {
     pub status: Option<&'a str>,
 }
 
-/// Tâches du tableau (sans leurs fichiers), les plus prioritaires puis les
-/// plus récentes d'abord. `user_id` ne sert qu'à charger le token git de
-/// l'utilisateur courant.
+/// Tâches du tableau (sans leurs fichiers), par état puis dans l'ordre de
+/// leur colonne (`order_tasks`). `user_id` ne sert qu'à charger le token git
+/// de l'utilisateur courant.
 pub fn fetch_tasks(conn: &Connection, user_id: i64, f: &TaskFilter) -> rusqlite::Result<Vec<TaskRow>> {
     let sql = format!(
-        "{} WHERE (?2 IS NULL OR t.project_id = ?2) AND (?3 IS NULL OR t.status = ?3)
-         ORDER BY t.priority DESC, t.id DESC",
+        "{} WHERE (?2 IS NULL OR t.project_id = ?2) AND (?3 IS NULL OR t.status = ?3)",
         task_select()
     );
-    conn.prepare(&sql)?
+    let mut tasks = conn
+        .prepare(&sql)?
         .query_map(rusqlite::params![user_id, f.project_id, f.status], task_from_row)?
-        .collect()
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    order_tasks(conn, &mut tasks)?;
+    Ok(tasks)
+}
+
+/// Trie les tâches par état, puis dans chaque colonne :
+/// - draft : priorité, puis la plus récente ;
+/// - todo : ordre de traitement (`order::Graph::todo_plan`), annoté du rang,
+///   de la prochaine tâche des agents et du début des tâches en attente ;
+/// - progress, review : arrivée dans l'état (la plus ancienne en haut) ;
+/// - deploy : priorité puis approbation, comme le worker ;
+/// - done : la plus récemment terminée en haut.
+fn order_tasks(conn: &Connection, tasks: &mut [TaskRow]) -> rusqlite::Result<()> {
+    let graph = order::Graph::load(conn)?;
+    let eff = graph.effective();
+    let plan: HashMap<i64, usize> = graph.todo_plan(&eff).into_iter().enumerate().map(|(i, id)| (id, i)).collect();
+    for t in tasks.iter_mut() {
+        if let Some(e) = eff.get(&t.id) {
+            t.eff_priority = e.priority;
+            t.inherited_from = e.inherited_from;
+        }
+    }
+    let column = |s: &str| STATUSES.iter().position(|c| c.value == s).unwrap_or(STATUSES.len());
+    tasks.sort_by_key(|t| {
+        let key = match t.status.as_str() {
+            "draft" => (-t.priority, -t.id, 0),
+            "todo" => (plan.get(&t.id).map_or(i64::MAX, |&i| i as i64), 0, 0),
+            "deploy" => (-t.priority, t.state_seq, t.id),
+            "done" => (-t.state_seq, -t.id, 0),
+            _ => (t.state_seq, t.id, 0),
+        };
+        (column(&t.status), key)
+    });
+    let (mut rank, mut next_found, mut waiting_found) = (0, false, false);
+    for t in tasks.iter_mut().filter(|t| t.status == "todo") {
+        rank += 1;
+        t.rank = rank;
+        let ready = graph.is_ready(t.id);
+        let for_agents = t.project.as_ref().is_none_or(|p| p.agent != NO_AGENT);
+        if ready && for_agents && !next_found {
+            t.is_next = true;
+            next_found = true;
+        }
+        if !ready && !waiting_found {
+            t.first_waiting = true;
+            waiting_found = true;
+        }
+    }
+    Ok(())
 }
 
 fn fetch_files(conn: &Connection, task_id: i64) -> rusqlite::Result<Vec<FileRow>> {

@@ -335,12 +335,12 @@ form.delete-task { margin-top: 1.2rem; }
   color: var(--muted);
   white-space: nowrap;
 }
-.card-tags .prio-0 { opacity: 0.7; }
-.card-tags .prio-2 { color: #e0a95e; border-color: #e0a95e; }
-.card-tags .prio-3 { color: #fff; background: var(--danger); border-color: var(--danger); }
-.card-tags .claim { color: #d8a63a; border-color: #d8a63a; }
-.card-tags .claim-expired { color: var(--danger); border-color: var(--danger); }
-.card-tags .blocked { color: var(--danger); }
+.card.task .tag.prio-0 { opacity: 0.7; }
+.card.task .tag.prio-2 { color: #e0a95e; border-color: #e0a95e; }
+.card.task .tag.prio-3 { color: #fff; background: var(--danger); border-color: var(--danger); }
+.card.task .tag.claim { color: #d8a63a; border-color: #d8a63a; }
+.card.task .tag.claim-expired { color: var(--danger); border-color: var(--danger); }
+.card.task .tag.blocked { color: var(--danger); }
 .st-label { font-size: 0.9rem; font-weight: normal; padding: 0.1rem 0.5rem; border-radius: 4px; background: var(--panel); }
 .field-row { display: flex; gap: 0.8rem; flex-wrap: wrap; }
 .field-row label { flex: 1; min-width: 160px; }
@@ -425,3 +425,27 @@ pre.copyable { background: var(--bg); padding: 0.5rem 0.7rem; border-radius: 4px
   white-space: nowrap;
 }
 form.rowform label.field select { min-width: 0; width: 100%; }
+
+/* Ordre de traitement (colonne To do) */
+.card.task .rank {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  min-width: 1.4rem;
+  text-align: center;
+  padding: 0 0.3rem;
+}
+.card.task .tag.next { color: #0d1117; background: var(--accent); border-color: var(--accent); font-weight: 600; }
+.col-sep {
+  font-size: 0.75rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.col-sep::before, .col-sep::after { content: ""; flex: 1; border-top: 1px dashed var(--border); }
+.col-sep ~ .card.task { opacity: 0.75; }

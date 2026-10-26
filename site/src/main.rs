@@ -8,6 +8,7 @@ mod git_diff;
 mod markdown;
 mod mcp;
 mod notify;
+mod order;
 mod projects;
 mod review;
 mod tokens;

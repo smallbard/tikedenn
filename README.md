@@ -42,6 +42,10 @@ ces transitions sont réservées aux humains (contrôlé par le serveur).
 - **Tableau partagé** par tous les utilisateurs, filtrable par projet et
   rafraîchi automatiquement (htmx) : priorité, dépendances (« bloquée par #12 »),
   agent qui détient la tâche, branche. Glisser-déposer entre colonnes.
+  La colonne *To do* suit l'**ordre de traitement** des agents (rang, badge
+  « next », tâches prêtes puis tâches en attente de leurs dépendances, placées
+  après celles-ci) ; une tâche **hérite de la priorité** des tâches qui
+  l'attendent (« urgent ↑ #42 »).
 - **Tâche** : description et **critères d'acceptation** en Markdown (graphes
   mermaid, onglets Preview / Edit), priorité, dépendances,
   branche git, pièces jointes (BLOB SQLite, 10 Mo max) et **journal**
@@ -108,8 +112,8 @@ si besoin puis passe en revue), `tkd release`, `tkd create`, `tkd update`, `tkd 
    config), sinon le dossier de `repos_root` (défaut `~/Repos`) dont
    `origin` correspond au dépôt du projet. Les projets dont l'agent est
    *None* sont ignorés.
-2. Prend les tâches `todo` de ces projets (priorité puis ancienneté, en
-   ignorant les tâches bloquées), crée un **git worktree par tâche** sur sa
+2. Prend les tâches `todo` de ces projets (priorité effective — héritée des
+   tâches qui attendent — puis ancienneté, en ignorant les tâches bloquées), crée un **git worktree par tâche** sur sa
    branche (`task/<id>-<slug>`), lance l'agent du projet (sinon celui de
    `--agent` / de la config) avec la fiche de la tâche et
    le protocole, et renouvelle le bail tant qu'il travaille.

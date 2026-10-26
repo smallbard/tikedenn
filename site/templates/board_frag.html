@@ -9,6 +9,7 @@
     <header>{{ c.status.label }} <span class="count">{{ c.tasks.len() }}</span></header>
     <div class="col-body">
       {% for task in c.tasks %}
+      {% if task.first_waiting %}<div class="col-sep" title="These tasks wait for their dependencies; they are listed after them">Waiting for dependencies</div>{% endif %}
       {% include "task_card.html" %}
       {% else %}
       <p class="empty">No task.</p>

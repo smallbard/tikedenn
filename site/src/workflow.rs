@@ -100,6 +100,11 @@ struct TaskState {
     blocked_by: Vec<i64>,
 }
 
+/// Ordre d'arrivée d'une tâche dans son état actuel (alias `t`) : id de son
+/// dernier changement d'état dans le journal (0 si aucun).
+pub const STATE_SEQ_SQL: &str =
+    "COALESCE((SELECT MAX(l.id) FROM task_log l WHERE l.task_id = t.id AND l.kind = 'move'), 0)";
+
 /// Condition SQL « prise en charge active » (bail non expiré) sur l'alias `t`.
 pub const CLAIM_ACTIVE_SQL: &str =
     "(t.claimed_by != '' AND t.claimed_until IS NOT NULL AND t.claimed_until >= datetime('now'))";
@@ -341,19 +346,23 @@ pub fn claim_next(
         let ids: Vec<String> = projects.iter().map(i64::to_string).collect();
         format!("AND t.project_id IN ({})", ids.join(","))
     };
+    // Déploiements : dans l'ordre d'approbation (passage en deploy) à
+    // priorité égale. Travail : ordre de `order::sort_for_agents` (priorité
+    // héritée des tâches qui attendent, puis la plus ancienne).
     let sql = format!(
         "SELECT t.id FROM tasks t
          WHERE {status_cond} {project_cond} AND NOT {CLAIM_ACTIVE_SQL}
            AND NOT EXISTS (SELECT 1 FROM projects p WHERE p.id = t.project_id AND p.agent = '{NO_AGENT}')
            AND NOT EXISTS (SELECT 1 FROM task_deps d JOIN tasks o ON o.id = d.depends_on
                            WHERE d.task_id = t.id AND o.status != 'done')
-         ORDER BY t.priority DESC, t.id ASC LIMIT 1"
+         ORDER BY t.priority DESC, {STATE_SEQ_SQL}, t.id"
     );
-    // Quelques essais : un autre agent peut prendre le candidat entre-temps.
-    for _ in 0..5 {
-        let Some(id) = conn.query_row(&sql, [], |r| r.get::<_, i64>(0)).optional()? else {
-            return Ok(None);
-        };
+    let mut ids: Vec<i64> = conn.prepare(&sql)?.query_map([], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?;
+    if status == "todo" {
+        crate::order::sort_for_agents(conn, &mut ids)?;
+    }
+    // Un autre agent peut prendre un candidat entre-temps : on passe au suivant.
+    for id in ids {
         match claim(conn, actor, id, ttl) {
             Ok(_) => return Ok(Some(id)),
             Err(WfError::Conflict(_)) => continue,
@@ -445,6 +454,20 @@ mod tests {
         // Un humain garde la main.
         move_task(&conn, &Actor::Human(user()), 2, "progress", None).unwrap();
         assert_eq!(status(&conn, 2), "progress");
+    }
+
+    #[test]
+    fn claim_next_inherits_priority_from_waiting_tasks() {
+        let conn = setup();
+        // La tâche 1 (basse) bloque une nouvelle tâche urgente : elle passe avant la 2 (high).
+        conn.execute_batch(
+            "INSERT INTO tasks (user_id, title, status, priority) VALUES (1, 'urgent', 'todo', 3);
+             INSERT INTO task_deps (task_id, depends_on) VALUES (4, 1);",
+        )
+        .unwrap();
+        let a = agent("claude");
+        assert_eq!(claim_next(&conn, &a, &[], "todo", None).unwrap(), Some(1));
+        assert_eq!(claim_next(&conn, &a, &[], "todo", None).unwrap(), Some(2));
     }
 
     #[test]

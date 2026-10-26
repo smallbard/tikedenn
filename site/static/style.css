@@ -113,7 +113,9 @@ button:hover { filter: brightness(1.1); }
   display: grid;
   grid-template-columns: repeat(4, 1fr);
   gap: 1rem;
-  align-items: start;
+  /* Colonnes à la hauteur de la plus remplie : une colonne presque vide
+     reste une large zone de dépôt, sans défiler pendant le glisser. */
+  align-items: stretch;
 }
 @media (max-width: 900px) { .board { grid-template-columns: repeat(2, 1fr); } }
 @media (max-width: 560px) { .board { grid-template-columns: 1fr; } }
@@ -129,6 +131,8 @@ button:hover { filter: brightness(1.1); }
   border-radius: 10px;
   min-height: 120px;
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 .col > header {
   display: flex;
@@ -144,7 +148,7 @@ button:hover { filter: brightness(1.1); }
   font-weight: 400;
   font-size: 0.85rem;
 }
-.col-body { padding: 0.7rem; display: flex; flex-direction: column; gap: 0.7rem; }
+.col-body { flex: 1; padding: 0.7rem; display: flex; flex-direction: column; gap: 0.7rem; }
 /* Cartes déplaçables par glisser-déposer d'une colonne à l'autre. */
 .card.task { cursor: grab; }
 .card.task.dragging { opacity: 0.4; }

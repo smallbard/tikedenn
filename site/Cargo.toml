@@ -21,6 +21,8 @@ serde_json = "1"
 sha2 = "0.10"
 ureq = "2"
 tikedenn-common = { path = "../common" }
+pulldown-cmark = { version = "0.13", default-features = false, features = ["html"] }
+ammonia = "4"
 
 # Binaire musl (VPS) : OpenSSL compilé en statique pour rester 100% autonome.
 [target.'cfg(target_env = "musl")'.dependencies]

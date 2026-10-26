@@ -5,6 +5,7 @@ mod board;
 mod db;
 mod files;
 mod git_diff;
+mod markdown;
 mod mcp;
 mod notify;
 mod projects;
@@ -141,6 +142,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/projects/{id}/delete", post(projects::delete_project))
         .route("/tasks", post(board::create_task))
         .route("/tasks/new", get(board::new_task_page))
+        .route("/markdown", post(markdown::preview))
         .route("/tasks/{id}/edit", get(board::edit_task_page))
         .route("/tasks/{id}/diff", get(git_diff::task_diff_page))
         .route("/tasks/{id}", post(board::update_task))

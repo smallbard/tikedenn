@@ -57,12 +57,24 @@
   <label>Git branch (optional — agents create task/{{ task.id }}-… if empty)
     <input name="branch" value="{{ task.branch }}" maxlength="200">
   </label>
-  <label>Description / full specification
-    <textarea name="description" rows="8">{{ task.description }}</textarea>
-  </label>
-  <label>Acceptance criteria (what the review will check)
-    <textarea name="acceptance" rows="4">{{ task.acceptance }}</textarea>
-  </label>
+  <div class="md-field">
+    <div class="md-head">
+      <span class="md-label">Description / full specification</span>
+      <button type="button" class="md-tab{% if !task.description.is_empty() %} active{% endif %}" data-tab="preview">Preview</button>
+      <button type="button" class="md-tab{% if task.description.is_empty() %} active{% endif %}" data-tab="edit">Edit</button>
+    </div>
+    <div class="md-preview markdown"{% if task.description.is_empty() %} hidden{% endif %}>{{ task.description_html()|safe }}</div>
+    <textarea name="description" rows="14" placeholder="Markdown — ```mermaid blocks are drawn as diagrams"{% if !task.description.is_empty() %} hidden{% endif %}>{{ task.description }}</textarea>
+  </div>
+  <div class="md-field">
+    <div class="md-head">
+      <span class="md-label">Acceptance criteria (what the review will check)</span>
+      <button type="button" class="md-tab{% if !task.acceptance.is_empty() %} active{% endif %}" data-tab="preview">Preview</button>
+      <button type="button" class="md-tab{% if task.acceptance.is_empty() %} active{% endif %}" data-tab="edit">Edit</button>
+    </div>
+    <div class="md-preview markdown"{% if task.acceptance.is_empty() %} hidden{% endif %}>{{ task.acceptance_html()|safe }}</div>
+    <textarea name="acceptance" rows="6" placeholder="Markdown — ```mermaid blocks are drawn as diagrams"{% if !task.acceptance.is_empty() %} hidden{% endif %}>{{ task.acceptance }}</textarea>
+  </div>
   <div class="form-actions">
     <button type="submit">Save</button>
     <div class="status-buttons">

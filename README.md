@@ -42,7 +42,8 @@ ces transitions sont réservées aux humains (contrôlé par le serveur).
 - **Tableau partagé** par tous les utilisateurs, filtrable par projet et
   rafraîchi automatiquement (htmx) : priorité, dépendances (« bloquée par #12 »),
   agent qui détient la tâche, branche. Glisser-déposer entre colonnes.
-- **Tâche** : description, **critères d'acceptation**, priorité, dépendances,
+- **Tâche** : description et **critères d'acceptation** en Markdown (graphes
+  mermaid, onglets Preview / Edit), priorité, dépendances,
   branche git, pièces jointes (BLOB SQLite, 10 Mo max) et **journal**
   (commentaires, rapports d'agents, revues, changements d'état, logs de
   déploiement).

@@ -102,6 +102,15 @@ impl TaskRow {
         join_ids(&self.blocked_by, " #")
     }
 
+    /// Description et critères d'acceptation rendus en Markdown (HTML nettoyé).
+    pub fn description_html(&self) -> String {
+        crate::markdown::render(&self.description)
+    }
+
+    pub fn acceptance_html(&self) -> String {
+        crate::markdown::render(&self.acceptance)
+    }
+
     /// Dernier rapport d'agent (résumé soumis à la revue).
     pub fn last_report(&self) -> Option<&LogEntry> {
         self.log.iter().rev().find(|l| l.kind == "report")

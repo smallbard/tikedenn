@@ -13,7 +13,7 @@
   {% if !task.acceptance.is_empty() %}
   <details open class="acceptance">
     <summary>Acceptance criteria</summary>
-    <div class="log-body">{{ task.acceptance }}</div>
+    <div class="markdown">{{ task.acceptance_html()|safe }}</div>
   </details>
   {% endif %}
   <div class="review-actions">

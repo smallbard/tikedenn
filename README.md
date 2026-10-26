@@ -125,6 +125,13 @@ si besoin puis passe en revue), `tkd release`, `tkd create`, `tkd update`, `tkd 
    le protocole, et renouvelle le bail tant qu'il travaille.
 3. Si l'agent s'arrête sans soumettre : ses commits sont poussés sur la
    branche de la tâche et la tâche passe en revue avec la fin de sa sortie.
+   **Worker arrêté pendant qu'un agent travaillait** (Ctrl-C, redémarrage…) :
+   au démarrage suivant, puis à chaque tour, le worker reprend en priorité
+   ses tâches interrompues — en cours, prises avec son token, dont le
+   worktree existe sur la machine et qu'aucun worker vivant ne traite
+   (marqueur `~/.cache/tikedenn/running/task-<id>` avec le pid). L'agent
+   repart dans le même worktree, prévenu que du travail peut déjà s'y
+   trouver.
 4. Déploie les tâches approuvées : merge `--no-ff` dans un worktree détaché,
    push de la base, `publish <nom> --repo <dossier>` (le clone de
    l'utilisateur s'il est propre et sur la base, sinon le worktree), log de

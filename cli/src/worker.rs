@@ -248,8 +248,9 @@ pub(crate) fn run_agent(
 
 /// Traite une tâche prise en charge : worktree, agent, filet de sécurité
 /// (push des commits restants, passage en revue si l'agent n'a pas soumis).
-fn run_task(ctx: &Ctx, agent: &str, task: TaskDetail, project: Project, repo: PathBuf) -> Result<()> {
+fn run_task(ctx: &Ctx, agent: &str, task: TaskDetail, project: Project, repo: PathBuf, resumed: bool) -> Result<()> {
     let id = task.summary.id;
+    let _marker = RunningMarker::create(&ctx.cfg, id);
     git(&repo, &["fetch", "origin", "--prune"])?;
     let base = base_branch(&repo, &project)?;
     let branch = if task.summary.branch.is_empty() {
@@ -263,8 +264,16 @@ fn run_task(ctx: &Ctx, agent: &str, task: TaskDetail, project: Project, repo: Pa
     prepare_worktree(&repo, &wt, &branch, &base)?;
     let task = ctx.client.task(id)?;
 
-    let prompt = agent_prompt(&task, &branch, &base);
-    let announce = format!("Worker started {agent} on branch `{branch}`");
+    let mut prompt = agent_prompt(&task, &branch, &base);
+    let announce = if resumed {
+        prompt.push_str(&format!(
+            "\nNote: a previous run on this task was interrupted (worker stopped). The worktree may already hold part \
+             of the work: check `git status`, `git log {base}..HEAD` and the task log before continuing.\n"
+        ));
+        format!("Worker resumed {agent} on branch `{branch}` after an interruption")
+    } else {
+        format!("Worker started {agent} on branch `{branch}`")
+    };
     let (outcome, log_path) = run_agent(ctx, agent, id, &wt, &prompt, "progress", &announce)?;
     if let Outcome::Lost(reason) = &outcome {
         println!("[#{id}] stopped: the task was taken over ({reason}).");
@@ -318,18 +327,84 @@ fn push_leftovers(wt: &Path, branch: &str, base: &str) -> Result<bool> {
 
 /// Lance le traitement d'une tâche dans un thread ; une erreur de
 /// préparation renvoie la tâche en revue avec l'explication.
-fn spawn_task(ctx: &Ctx, agent: &str, task: TaskDetail, project: Project, repo: PathBuf) -> JoinHandle<()> {
+fn spawn_task(ctx: &Ctx, agent: &str, task: TaskDetail, project: Project, repo: PathBuf, resumed: bool) -> (i64, JoinHandle<()>) {
     let (ctx, agent) = (ctx.clone(), agent.to_string());
-    thread::spawn(move || {
-        let id = task.summary.id;
-        if let Err(e) = run_task(&ctx, &agent, task, project, repo) {
+    let id = task.summary.id;
+    (id, thread::spawn(move || {
+        if let Err(e) = run_task(&ctx, &agent, task, project, repo, resumed) {
             eprintln!("[#{id}] error: {e:#}");
             let note = format!("The worker could not run the task: {e:#}");
             if let Err(e2) = ctx.client.move_to(id, "review", Some(&note)) {
                 eprintln!("[#{id}] could not report the error: {e2}");
             }
         }
-    })
+    }))
+}
+
+/// Marqueur local d'une tâche en cours (`<work_dir>/running/task-<id>`,
+/// contenant le pid du worker) : supprimé à la fin du traitement, il reste
+/// si le worker est tué, et empêche un autre worker vivant de la machine de
+/// reprendre la tâche.
+struct RunningMarker(PathBuf);
+
+fn marker_path(cfg: &Config, id: i64) -> PathBuf {
+    cfg.work_dir().join("running").join(format!("task-{id}"))
+}
+
+impl RunningMarker {
+    fn create(cfg: &Config, id: i64) -> RunningMarker {
+        let path = marker_path(cfg, id);
+        if let Some(dir) = path.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        let _ = std::fs::write(&path, std::process::id().to_string());
+        RunningMarker(path)
+    }
+}
+
+impl Drop for RunningMarker {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
+/// Vrai si un autre worker encore vivant traite la tâche sur cette machine.
+fn held_by_live_worker(cfg: &Config, id: i64) -> bool {
+    let Ok(pid) = std::fs::read_to_string(marker_path(cfg, id)) else { return false };
+    let pid = pid.trim();
+    if pid.is_empty() || pid == std::process::id().to_string() {
+        return false;
+    }
+    let proc = Path::new("/proc").join(pid);
+    if Path::new("/proc/self").exists() {
+        // Linux : le pid doit encore être un `tkd` (pas un pid réutilisé).
+        return std::fs::read(proc.join("cmdline")).is_ok_and(|c| String::from_utf8_lossy(&c).contains("tkd"));
+    }
+    Command::new("kill")
+        .args(["-0", pid])
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|s| s.success())
+}
+
+/// Tâches interrompues à reprendre : en cours, prises avec ce token, dont le
+/// worktree existe sur cette machine (un agent lancé à la main n'en a pas)
+/// et qu'aucun worker vivant ne traite (worker tué, machine redémarrée…).
+fn interrupted_tasks(ctx: &Ctx, local: &[(Project, PathBuf)], running: &[i64]) -> Vec<(i64, Project, PathBuf)> {
+    let mut out = vec![];
+    for (project, repo) in local {
+        let Ok(tasks) = ctx.client.tasks(Some("progress"), Some(&project.id.to_string())) else { continue };
+        for t in tasks {
+            if t.claimed_by.as_deref() == Some(&ctx.claimer)
+                && !running.contains(&t.id)
+                && task_worktree(&ctx.cfg, project, t.id).join(".git").exists()
+                && !held_by_live_worker(&ctx.cfg, t.id)
+            {
+                out.push((t.id, project.clone(), repo.clone()));
+            }
+        }
+    }
+    out
 }
 
 pub fn run(cfg: Config, opts: WorkerOpts) -> Result<()> {
@@ -350,11 +425,11 @@ pub fn run(cfg: Config, opts: WorkerOpts) -> Result<()> {
         if opts.deploy { ", deploys approved tasks" } else { "" },
         if opts.work { "" } else { " (no agent work)" },
     );
-    let mut agents: Vec<JoinHandle<()>> = vec![];
+    let mut agents: Vec<(i64, JoinHandle<()>)> = vec![];
     let mut deploying: Option<JoinHandle<()>> = None;
     let mut warned_empty = false;
     loop {
-        agents.retain(|h| !h.is_finished());
+        agents.retain(|(_, h)| !h.is_finished());
         if deploying.as_ref().is_some_and(|h| h.is_finished()) {
             deploying = None;
         }
@@ -391,6 +466,25 @@ pub fn run(cfg: Config, opts: WorkerOpts) -> Result<()> {
                 Err(e) => eprintln!("Could not claim a deploy task: {e:#}"),
             }
         }
+        // D'abord les tâches interrompues (worker arrêté pendant qu'un agent
+        // travaillait), avant d'en prendre de nouvelles.
+        if opts.work && agents.len() < opts.max_parallel {
+            let running: Vec<i64> = agents.iter().map(|(id, _)| *id).collect();
+            for (id, project, repo) in interrupted_tasks(&ctx, &local, &running) {
+                if agents.len() >= opts.max_parallel {
+                    break;
+                }
+                match ctx.client.claim(id, Some(CLAIM_TTL_MINUTES)) {
+                    Ok(task) => {
+                        claimed = true;
+                        println!("[#{id}] resuming an interrupted task.");
+                        let agent = project_agent(&project, &opts.agent).to_string();
+                        agents.push(spawn_task(&ctx, &agent, task, project, repo, true));
+                    }
+                    Err(e) => eprintln!("[#{id}] could not resume the task: {e:#}"),
+                }
+            }
+        }
         while opts.work && agents.len() < opts.max_parallel && !local.is_empty() {
             let req = ClaimNext { projects: ids.clone(), status: Some("todo".into()), ttl_minutes: Some(CLAIM_TTL_MINUTES) };
             match ctx.client.claim_next(&req) {
@@ -399,7 +493,7 @@ pub fn run(cfg: Config, opts: WorkerOpts) -> Result<()> {
                     match local.iter().find(|(p, _)| Some(p.id) == task.summary.project_id) {
                         Some((project, repo)) => {
                             let agent = project_agent(project, &opts.agent);
-                            agents.push(spawn_task(&ctx, agent, task, project.clone(), repo.clone()))
+                            agents.push(spawn_task(&ctx, agent, task, project.clone(), repo.clone(), false))
                         }
                         None => break,
                     }
@@ -413,7 +507,7 @@ pub fn run(cfg: Config, opts: WorkerOpts) -> Result<()> {
         }
 
         if opts.once && !claimed {
-            for h in agents.drain(..).chain(deploying.take()) {
+            for h in agents.drain(..).map(|(_, h)| h).chain(deploying.take()) {
                 let _ = h.join();
             }
             println!("Nothing left to do.");
@@ -424,10 +518,39 @@ pub fn run(cfg: Config, opts: WorkerOpts) -> Result<()> {
         let deadline = Instant::now() + Duration::from_secs(opts.poll_seconds.max(5));
         while Instant::now() < deadline {
             thread::sleep(Duration::from_secs(2));
-            let freed = agents.iter().any(|h| h.is_finished()) || deploying.as_ref().is_some_and(|h| h.is_finished());
+            let freed = agents.iter().any(|(_, h)| h.is_finished()) || deploying.as_ref().is_some_and(|h| h.is_finished());
             if freed || (opts.once && claimed) {
                 break;
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn markers_tell_live_workers_from_dead_ones() {
+        let dir = std::env::temp_dir().join(format!("tkd-marker-test-{}", std::process::id()));
+        let mut cfg = Config::default();
+        cfg.worker.work_dir = dir.to_string_lossy().into_owned();
+        // Pas de marqueur, ou marqueur de ce processus : libre.
+        assert!(!held_by_live_worker(&cfg, 1));
+        let marker = RunningMarker::create(&cfg, 1);
+        assert!(marker_path(&cfg, 1).exists());
+        assert!(!held_by_live_worker(&cfg, 1));
+        drop(marker);
+        assert!(!marker_path(&cfg, 1).exists());
+        // Worker tué (pid disparu) ou pid réutilisé par un autre programme.
+        std::fs::create_dir_all(dir.join("running")).unwrap();
+        std::fs::write(marker_path(&cfg, 2), "999999999").unwrap();
+        assert!(!held_by_live_worker(&cfg, 2));
+        let mut other = Command::new("sleep").arg("5").spawn().unwrap();
+        std::fs::write(marker_path(&cfg, 3), other.id().to_string()).unwrap();
+        assert!(!held_by_live_worker(&cfg, 3));
+        let _ = other.kill();
+        let _ = other.wait();
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

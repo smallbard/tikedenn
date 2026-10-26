@@ -18,6 +18,10 @@ draft ──humain──▶ todo ──agent──▶ progress ──agent──
   le retour est dans le journal de la tâche que relit l'agent suivant).
 - **deploy** : le worker merge la branche dans la branche de base, pousse, puis
   lance `publish <nom>` ; succès → **done**, échec → retour en review avec le log.
+  En cas de **conflit de merge**, l'agent du projet est d'abord chargé de
+  rebaser la branche sur la base (résolution des conflits, tests, push
+  `--force-with-lease`) ; la tâche revient ensuite en review avec son compte
+  rendu, pour relire la résolution avant d'approuver à nouveau.
 
 Un agent ne peut ni passer une tâche de draft à todo, ni approuver une revue :
 ces transitions sont réservées aux humains (contrôlé par le serveur).
@@ -124,7 +128,11 @@ si besoin puis passe en revue), `tkd release`, `tkd create`, `tkd update`, `tkd 
 4. Déploie les tâches approuvées : merge `--no-ff` dans un worktree détaché,
    push de la base, `publish <nom> --repo <dossier>` (le clone de
    l'utilisateur s'il est propre et sur la base, sinon le worktree), log de
-   publication joint à la tâche.
+   publication joint à la tâche. Conflit de merge : rebase confié à l'agent
+   (worktree de la tâche, remis sur la branche approuvée), vérifié par le
+   worker (la branche poussée doit contenir la base ; il pousse lui-même un
+   rebase local non poussé), puis retour en review avec le compte rendu ou
+   l'échec.
 
 Configuration : `~/.config/tikedenn/config.toml` (voir l'en-tête de
 `cli/src/config.rs`) — commandes des agents (`claude_command`, `pi_command`,

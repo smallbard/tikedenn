@@ -14,6 +14,8 @@ States: `draft → todo → progress → review → deploy → done`.
   changes (→ todo again, with feedback in the task log).
 - **deploy / done**: after approval, the `tkd worker` merges the branch into the base
   branch and runs `publish`. Agents never merge into the base branch themselves.
+  If the merge conflicts, the worker may ask an agent to rebase the branch on the base
+  (then push it with `--force-with-lease`); the task goes back to review afterwards.
 
 ## Commands
 

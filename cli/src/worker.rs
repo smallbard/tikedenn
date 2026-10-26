@@ -80,14 +80,14 @@ pub fn local_projects(ctx: &Ctx, wanted: &[String]) -> Result<Vec<(Project, Path
 
 /// Agent à lancer pour un projet : celui choisi sur le projet, sinon celui
 /// du worker.
-fn project_agent<'a>(project: &'a Project, default: &'a str) -> &'a str {
+pub(crate) fn project_agent<'a>(project: &'a Project, default: &'a str) -> &'a str {
     match project.agent.as_str() {
         "claude" | "pi" => &project.agent,
         _ => default,
     }
 }
 
-fn agent_command(cfg: &Config, agent: &str) -> Result<Vec<String>> {
+pub(crate) fn agent_command(cfg: &Config, agent: &str) -> Result<Vec<String>> {
     let cmd = match agent {
         "claude" => cfg.worker.claude_command.clone(),
         "pi" => cfg.worker.pi_command.clone(),
@@ -132,7 +132,7 @@ You may add progress notes with `tkd comment {id} -m "…"` and read the task ag
 
 /// Prépare le worktree de la tâche (réutilisé s'il existe : reprise après
 /// une demande de modifications).
-fn prepare_worktree(repo: &Path, wt: &Path, branch: &str, base: &str) -> Result<()> {
+pub(crate) fn prepare_worktree(repo: &Path, wt: &Path, branch: &str, base: &str) -> Result<()> {
     if wt.join(".git").exists() {
         // Mise à jour avec ce qui a pu être poussé entre-temps.
         if remote_branch_exists(repo, branch) {
@@ -154,46 +154,41 @@ fn prepare_worktree(repo: &Path, wt: &Path, branch: &str, base: &str) -> Result<
     Ok(())
 }
 
-enum Outcome {
+pub(crate) enum Outcome {
     Exited(std::process::ExitStatus),
     TimedOut,
     /// La tâche a été reprise par un humain ou un autre agent.
     Lost(String),
 }
 
-/// Traite une tâche prise en charge : worktree, agent, filet de sécurité
-/// (push des commits restants, passage en revue si l'agent n'a pas soumis).
-fn run_task(ctx: &Ctx, agent: &str, task: TaskDetail, project: Project, repo: PathBuf) -> Result<()> {
-    let id = task.summary.id;
-    git(&repo, &["fetch", "origin", "--prune"])?;
-    let base = base_branch(&repo, &project)?;
-    let branch = if task.summary.branch.is_empty() {
-        let b = task_branch_name(id, &task.summary.title);
-        ctx.client.set_branch(id, &b)?;
-        b
-    } else {
-        task.summary.branch.clone()
-    };
-    let wt = task_worktree(&ctx.cfg, &project, id);
-    prepare_worktree(&repo, &wt, &branch, &base)?;
-    let task = ctx.client.task(id)?;
-
-    let prompt = agent_prompt(&task, &branch, &base);
+/// Lance l'agent dans `wt` avec la consigne `prompt` (journal
+/// `task-<id>-…`, annoncé dans le journal de la tâche par `announce`) et
+/// attend sa fin. Le bail est renouvelé tant que la tâche reste dans l'état
+/// `status` ; si quelqu'un d'autre la reprend, l'agent est arrêté.
+pub(crate) fn run_agent(
+    ctx: &Ctx,
+    agent: &str,
+    id: i64,
+    wt: &Path,
+    prompt: &str,
+    status: &str,
+    announce: &str,
+) -> Result<(Outcome, PathBuf)> {
     let cmd: Vec<String> = agent_log::ensure_streaming(agent_command(&ctx.cfg, agent)?)
         .into_iter()
-        .map(|a| a.replace("{prompt}", &prompt))
+        .map(|a| a.replace("{prompt}", prompt))
         .collect();
     let (log_path, log) = log_file(&ctx.cfg, &format!("task-{id}"))?;
     ctx.client.comment(
         id,
-        &format!("Worker started {agent} on branch `{branch}` (log: {}).", log_path.display()),
+        &format!("{announce} (log: {}).", log_path.display()),
         "comment",
     )?;
     println!("[#{id}] {agent} started in {} (log {})", wt.display(), log_path.display());
 
     let mut child = Command::new(&cmd[0])
         .args(&cmd[1..])
-        .current_dir(&wt)
+        .current_dir(wt)
         .env("TIKEDENN_TASK", id.to_string())
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -226,12 +221,12 @@ fn run_task(ctx: &Ctx, agent: &str, task: TaskDetail, project: Project, repo: Pa
             if let Err(e) = ctx.client.claim(id, Some(CLAIM_TTL_MINUTES)) {
                 match status_of(&e) {
                     Some(404) | Some(409) => {
-                        // Soumise par l'agent (plus en cours) : on arrête de
+                        // Soumise par l'agent (a changé d'état) : on arrête de
                         // renouveler ; reprise par quelqu'un d'autre : on arrête l'agent.
                         renewing = false;
                         let current = ctx.client.task(id).ok();
                         let taken = current.as_ref().map_or(true, |t| {
-                            t.summary.status == "progress" && t.summary.claimed_by.as_deref() != Some(&ctx.claimer)
+                            t.summary.status == status && t.summary.claimed_by.as_deref() != Some(&ctx.claimer)
                         });
                         if taken {
                             let _ = child.kill();
@@ -248,6 +243,29 @@ fn run_task(ctx: &Ctx, agent: &str, task: TaskDetail, project: Project, repo: Pa
 
     // Fin du journal (un processus lancé par l'agent peut garder la sortie ouverte).
     let _ = pumped.recv_timeout(Duration::from_secs(5));
+    Ok((outcome, log_path))
+}
+
+/// Traite une tâche prise en charge : worktree, agent, filet de sécurité
+/// (push des commits restants, passage en revue si l'agent n'a pas soumis).
+fn run_task(ctx: &Ctx, agent: &str, task: TaskDetail, project: Project, repo: PathBuf) -> Result<()> {
+    let id = task.summary.id;
+    git(&repo, &["fetch", "origin", "--prune"])?;
+    let base = base_branch(&repo, &project)?;
+    let branch = if task.summary.branch.is_empty() {
+        let b = task_branch_name(id, &task.summary.title);
+        ctx.client.set_branch(id, &b)?;
+        b
+    } else {
+        task.summary.branch.clone()
+    };
+    let wt = task_worktree(&ctx.cfg, &project, id);
+    prepare_worktree(&repo, &wt, &branch, &base)?;
+    let task = ctx.client.task(id)?;
+
+    let prompt = agent_prompt(&task, &branch, &base);
+    let announce = format!("Worker started {agent} on branch `{branch}`");
+    let (outcome, log_path) = run_agent(ctx, agent, id, &wt, &prompt, "progress", &announce)?;
     if let Outcome::Lost(reason) = &outcome {
         println!("[#{id}] stopped: the task was taken over ({reason}).");
         return Ok(());
@@ -365,8 +383,8 @@ pub fn run(cfg: Config, opts: WorkerOpts) -> Result<()> {
                 Ok(Some(task)) => {
                     claimed = true;
                     if let Some((project, repo)) = local.iter().find(|(p, _)| Some(p.id) == task.summary.project_id) {
-                        let (ctx2, project, repo) = (ctx.clone(), project.clone(), repo.clone());
-                        deploying = Some(thread::spawn(move || deploy::deploy_and_report(&ctx2, task, &project, &repo, false)));
+                        let (ctx2, project, repo, agent2) = (ctx.clone(), project.clone(), repo.clone(), opts.agent.clone());
+                        deploying = Some(thread::spawn(move || deploy::deploy_and_report(&ctx2, task, &project, &repo, false, &agent2)));
                     }
                 }
                 Ok(None) => {}

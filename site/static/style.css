@@ -414,3 +414,14 @@ pre.copyable { background: var(--bg); padding: 0.5rem 0.7rem; border-radius: 4px
 .markdown table { border-collapse: collapse; }
 .markdown th, .markdown td { border: 1px solid var(--border); padding: 0.3rem 0.6rem; }
 .markdown img { max-width: 100%; }
+
+/* Projets : agent du worker */
+.agent-badge {
+  font-size: 0.72rem;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0.05rem 0.5rem;
+  white-space: nowrap;
+}
+form.rowform label.field select { min-width: 0; width: 100%; }

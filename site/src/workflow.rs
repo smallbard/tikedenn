@@ -6,7 +6,7 @@ use crate::auth::CurrentUser;
 use crate::notify;
 use axum::http::StatusCode;
 use rusqlite::{Connection, OptionalExtension};
-use tikedenn_common::{agent_may_move, api::LogEntry, is_valid_status};
+use tikedenn_common::{agent_may_move, api::LogEntry, is_valid_status, NO_AGENT};
 
 /// Durée par défaut d'une prise en charge (renouvelée par le worker).
 pub const DEFAULT_CLAIM_MINUTES: i64 = 60;
@@ -95,6 +95,8 @@ struct TaskState {
     title: String,
     claimed_by: String,
     claim_active: bool,
+    /// Agent du projet de la tâche ('' sans projet).
+    project_agent: String,
     blocked_by: Vec<i64>,
 }
 
@@ -113,9 +115,12 @@ pub fn blocked_by(conn: &Connection, task_id: i64) -> rusqlite::Result<Vec<i64>>
 }
 
 fn task_state(conn: &Connection, id: i64) -> WfResult<TaskState> {
-    let sql = format!("SELECT t.status, t.title, t.claimed_by, {CLAIM_ACTIVE_SQL} FROM tasks t WHERE t.id = ?1");
-    let (status, title, claimed_by, claim_active) = conn
-        .query_row(&sql, [id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))
+    let sql = format!(
+        "SELECT t.status, t.title, t.claimed_by, {CLAIM_ACTIVE_SQL}, COALESCE(p.agent, '')
+         FROM tasks t LEFT JOIN projects p ON p.id = t.project_id WHERE t.id = ?1"
+    );
+    let (status, title, claimed_by, claim_active, project_agent) = conn
+        .query_row(&sql, [id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)))
         .optional()?
         .ok_or(WfError::NotFound)?;
     Ok(TaskState {
@@ -123,8 +128,18 @@ fn task_state(conn: &Connection, id: i64) -> WfResult<TaskState> {
         title,
         claimed_by,
         claim_active,
+        project_agent,
         blocked_by: blocked_by(conn, id)?,
     })
+}
+
+/// Les tâches d'un projet réservé aux humains (agent « none ») ne peuvent
+/// être ni prises ni déplacées par un agent.
+fn check_agent_allowed(actor: &Actor, st: &TaskState) -> WfResult {
+    if actor.is_agent() && st.project_agent == NO_AGENT {
+        return Err(WfError::Forbidden("This task belongs to a project reserved for humans (agent: none).".into()));
+    }
+    Ok(())
 }
 
 fn blocked_message(ids: &[i64]) -> String {
@@ -170,6 +185,7 @@ pub fn move_task(conn: &Connection, actor: &Actor, id: i64, to: &str, note: Opti
         return Err(WfError::Invalid(format!("Unknown task state '{to}'.")));
     }
     let st = task_state(conn, id)?;
+    check_agent_allowed(actor, &st)?;
     let me = actor.claimer();
     if actor.is_agent() {
         if st.status != to && !agent_may_move(&st.status, to) {
@@ -240,6 +256,7 @@ fn clamp_ttl(ttl: Option<i64>) -> i64 {
 /// vient d'être prise (faux pour un simple renouvellement).
 pub fn claim(conn: &Connection, actor: &Actor, id: i64, ttl: Option<i64>) -> WfResult<bool> {
     let st = task_state(conn, id)?;
+    check_agent_allowed(actor, &st)?;
     if !matches!(st.status.as_str(), "todo" | "progress" | "deploy") {
         return Err(WfError::Conflict(format!(
             "Only tasks in todo, progress or deploy can be claimed (this one is in {}).",
@@ -327,6 +344,7 @@ pub fn claim_next(
     let sql = format!(
         "SELECT t.id FROM tasks t
          WHERE {status_cond} {project_cond} AND NOT {CLAIM_ACTIVE_SQL}
+           AND NOT EXISTS (SELECT 1 FROM projects p WHERE p.id = t.project_id AND p.agent = '{NO_AGENT}')
            AND NOT EXISTS (SELECT 1 FROM task_deps d JOIN tasks o ON o.id = d.depends_on
                            WHERE d.task_id = t.id AND o.status != 'done')
          ORDER BY t.priority DESC, t.id ASC LIMIT 1"
@@ -408,6 +426,25 @@ mod tests {
         assert_eq!(claimed, "");
         let kinds: Vec<String> = fetch_log(&conn, 2).unwrap().into_iter().map(|l| l.kind).collect();
         assert_eq!(kinds, ["claim", "move", "move", "report", "move"]);
+    }
+
+    #[test]
+    fn agents_ignore_projects_reserved_for_humans() {
+        let conn = setup();
+        conn.execute_batch(
+            "INSERT INTO projects (name, agent) VALUES ('chores', 'none');
+             UPDATE tasks SET project_id = 1 WHERE id = 2;",
+        )
+        .unwrap();
+        let a = agent("claude");
+        // La tâche 2 (la plus prioritaire) est sautée, et refusée si demandée explicitement.
+        assert!(matches!(claim(&conn, &a, 2, None), Err(WfError::Forbidden(_))));
+        assert!(matches!(move_task(&conn, &a, 2, "progress", None), Err(WfError::Forbidden(_))));
+        assert_eq!(claim_next(&conn, &a, &[], "todo", None).unwrap(), Some(1));
+        assert_eq!(claim_next(&conn, &a, &[], "todo", None).unwrap(), None);
+        // Un humain garde la main.
+        move_task(&conn, &Actor::Human(user()), 2, "progress", None).unwrap();
+        assert_eq!(status(&conn, 2), "progress");
     }
 
     #[test]

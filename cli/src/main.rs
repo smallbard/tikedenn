@@ -162,7 +162,7 @@ enum Cmd {
     },
     /// Run agents on todo tasks (one git worktree per task) and deploy approved tasks.
     Worker {
-        /// claude or pi (default from the config: claude).
+        /// claude or pi, for projects without an agent of their own (default from the config: claude).
         #[arg(long)]
         agent: Option<String>,
         #[arg(long)]
@@ -301,7 +301,12 @@ fn run_api(cmd: Cmd, cfg: &Config, client: &Client, json: bool) -> Result<()> {
                     .map(|p| p.display().to_string())
                     .unwrap_or_else(|| "no local clone".into());
                 let publish = if p.publish_name.is_empty() { "-".into() } else { format!("publish {}", p.publish_name) };
-                println!("{:<4} {:<20} {}  [{local}] [{publish}]", p.id, p.name, p.git_repo);
+                let agent = match p.agent.as_str() {
+                    "" => "default agent",
+                    "none" => "humans only",
+                    a => a,
+                };
+                println!("{:<4} {:<20} {}  [{local}] [{publish}] [{agent}]", p.id, p.name, p.git_repo);
             }
         }
         Cmd::List { status, project, all } => {

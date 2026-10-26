@@ -14,7 +14,7 @@ use std::process::{Command, Stdio};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tikedenn_common::api::{ClaimNext, Project, TaskDetail};
-use tikedenn_common::task_branch_name;
+use tikedenn_common::{task_branch_name, NO_AGENT};
 
 /// Bail de prise en charge demandé par le worker (renouvelé au tiers).
 pub const CLAIM_TTL_MINUTES: i64 = 30;
@@ -60,13 +60,14 @@ pub fn log_file(cfg: &Config, name: &str) -> Result<(PathBuf, std::fs::File)> {
     Ok((path, file))
 }
 
-/// Projets du serveur ayant un clone local (filtrés par `wanted`).
+/// Projets du serveur ayant un clone local (filtrés par `wanted`), hors
+/// projets réservés aux humains (agent « none »).
 pub fn local_projects(ctx: &Ctx, wanted: &[String]) -> Result<Vec<(Project, PathBuf)>> {
     let mut out = vec![];
     for p in ctx.client.projects(None)? {
         let selected = wanted.is_empty()
             || wanted.iter().any(|w| w.eq_ignore_ascii_case(&p.name) || *w == p.id.to_string());
-        if !selected {
+        if !selected || p.agent == NO_AGENT {
             continue;
         }
         if let Some(path) = find_local_repo(&ctx.cfg, &p) {
@@ -74,6 +75,15 @@ pub fn local_projects(ctx: &Ctx, wanted: &[String]) -> Result<Vec<(Project, Path
         }
     }
     Ok(out)
+}
+
+/// Agent à lancer pour un projet : celui choisi sur le projet, sinon celui
+/// du worker.
+fn project_agent<'a>(project: &'a Project, default: &'a str) -> &'a str {
+    match project.agent.as_str() {
+        "claude" | "pi" => &project.agent,
+        _ => default,
+    }
 }
 
 fn agent_command(cfg: &Config, agent: &str) -> Result<Vec<String>> {
@@ -304,7 +314,7 @@ pub fn run(cfg: Config, opts: WorkerOpts) -> Result<()> {
         agent_command(&ctx.cfg, &opts.agent)?;
     }
     println!(
-        "Tikedenn worker as {} — agent {}, up to {} task(s) in parallel{}{}",
+        "Tikedenn worker as {} — default agent {}, up to {} task(s) in parallel{}{}",
         ctx.claimer,
         opts.agent,
         opts.max_parallel,
@@ -359,7 +369,8 @@ pub fn run(cfg: Config, opts: WorkerOpts) -> Result<()> {
                     claimed = true;
                     match local.iter().find(|(p, _)| Some(p.id) == task.summary.project_id) {
                         Some((project, repo)) => {
-                            agents.push(spawn_task(&ctx, &opts.agent, task, project.clone(), repo.clone()))
+                            let agent = project_agent(project, &opts.agent);
+                            agents.push(spawn_task(&ctx, agent, task, project.clone(), repo.clone()))
                         }
                         None => break,
                     }

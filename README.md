@@ -51,7 +51,9 @@ ces transitions sont réservées aux humains (contrôlé par le serveur).
   base depuis le point de divergence, clone en cache par projet), panneau
   *Approve* / *Request changes*. Badge « To review » dans la navigation.
 - **Projets** partagés : dépôt git (+ token personnel pour un dépôt privé
-  https), branche de base (défaut main/master), nom `publish`.
+  https), branche de base (défaut main/master), nom `publish` et **agent** :
+  défaut du worker, Claude Code, pi, ou *None* — projet réservé aux humains
+  (todo list…), dont aucun agent ne peut prendre ni déplacer les tâches.
 - **Page Agents** (`/settings/tokens`) : tokens d'API par agent (portée
   lecture seule ou lecture/écriture ; seul le SHA-256 est stocké, le token
   n'est affiché qu'une fois) et instructions d'installation.
@@ -104,10 +106,12 @@ si besoin puis passe en revue), `tkd release`, `tkd create`, `tkd update`, `tkd 
 
 1. Trouve les clones locaux des projets : chemin explicite (`[projects]` de la
    config), sinon le dossier de `repos_root` (défaut `~/Repos`) dont
-   `origin` correspond au dépôt du projet.
+   `origin` correspond au dépôt du projet. Les projets dont l'agent est
+   *None* sont ignorés.
 2. Prend les tâches `todo` de ces projets (priorité puis ancienneté, en
    ignorant les tâches bloquées), crée un **git worktree par tâche** sur sa
-   branche (`task/<id>-<slug>`), lance l'agent avec la fiche de la tâche et
+   branche (`task/<id>-<slug>`), lance l'agent du projet (sinon celui de
+   `--agent` / de la config) avec la fiche de la tâche et
    le protocole, et renouvelle le bail tant qu'il travaille.
 3. Si l'agent s'arrête sans soumettre : ses commits sont poussés sur la
    branche de la tâche et la tâche passe en revue avec la fin de sa sortie.

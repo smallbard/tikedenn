@@ -20,6 +20,15 @@ pub fn priority_label(p: i64) -> &'static str {
     PRIORITIES.get(p as usize).copied().unwrap_or("normal")
 }
 
+/// Agent d'un projet : `""` = agent par défaut du worker, `claude` ou `pi`,
+/// `none` = projet réservé aux humains (aucun agent ne prend ses tâches).
+pub const PROJECT_AGENTS: [&str; 4] = ["", "claude", "pi", "none"];
+pub const NO_AGENT: &str = "none";
+
+pub fn is_valid_project_agent(s: &str) -> bool {
+    PROJECT_AGENTS.contains(&s)
+}
+
 /// Transitions permises à un agent (un humain peut tout faire depuis l'UI) :
 /// prendre une tâche prête, la soumettre en revue ou l'abandonner, et —
 /// pour le déploiement — la terminer ou la renvoyer en revue en cas d'échec.

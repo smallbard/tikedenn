@@ -95,6 +95,15 @@ pub fn init_app_schema(conn: &Connection) -> anyhow::Result<()> {
     if version < 3 {
         migrate_v3(conn)?;
     }
+    if version < 4 {
+        // Agent du worker par projet ('' = défaut, claude, pi, none = humains seulement).
+        conn.execute_batch(
+            "BEGIN;
+             ALTER TABLE projects ADD COLUMN agent TEXT NOT NULL DEFAULT '';
+             PRAGMA user_version = 4;
+             COMMIT;",
+        )?;
+    }
     Ok(())
 }
 
@@ -357,7 +366,7 @@ mod tests {
         init_app_schema(&conn).unwrap();
         let ddl = table_sql(&conn, "projects").unwrap();
         init_app_schema(&conn).unwrap();
-        assert_eq!(version(&conn), 3);
+        assert_eq!(version(&conn), 4);
         assert_eq!(table_sql(&conn, "projects").unwrap(), ddl);
         assert!(!has_column(&conn, "projects", "git_token").unwrap());
     }
@@ -384,7 +393,7 @@ mod tests {
         )
         .unwrap();
         init_app_schema(&conn).unwrap();
-        assert_eq!(version(&conn), 3);
+        assert_eq!(version(&conn), 4);
         assert!(has_column(&conn, "users", "is_admin").unwrap());
         assert!(has_column(&conn, "tasks", "branch").unwrap());
         assert!(table_sql(&conn, "tasks").unwrap().contains("'review'"));

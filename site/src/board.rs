@@ -178,7 +178,7 @@ fn task_select() -> String {
                 (SELECT group_concat(depends_on) FROM task_deps WHERE task_id = t.id),
                 (SELECT group_concat(d.depends_on) FROM task_deps d JOIN tasks o ON o.id = d.depends_on
                  WHERE d.task_id = t.id AND o.status != 'done'),
-                u.username, t.created_at, t.updated_at
+                u.username, t.created_at, t.updated_at, p.agent
          FROM tasks t LEFT JOIN projects p ON p.id = t.project_id
          LEFT JOIN project_tokens pt ON pt.project_id = p.id AND pt.user_id = ?1
          LEFT JOIN users u ON u.id = t.user_id"
@@ -206,6 +206,7 @@ fn task_from_row(r: &rusqlite::Row) -> rusqlite::Result<TaskRow> {
             default_branch: r.get(4)?,
             publish_name: r.get(5)?,
             token: r.get(6)?,
+            agent: r.get(21)?,
         }),
         None => None,
     };

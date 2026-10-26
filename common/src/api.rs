@@ -21,6 +21,10 @@ pub struct Project {
     pub default_branch: String,
     /// Nom du projet pour `publish <nom>` (vide = pas de publication).
     pub publish_name: String,
+    /// Agent du worker : "" (défaut du worker), "claude", "pi" ou "none"
+    /// (projet réservé aux humains).
+    #[serde(default)]
+    pub agent: String,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]

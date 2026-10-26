@@ -22,6 +22,8 @@ pub struct ProjectRow {
     pub default_branch: String,
     /// Nom du projet pour `publish <nom>` (vide = pas de publication).
     pub publish_name: String,
+    /// Agent du worker ('' = défaut, claude, pi, none = humains seulement).
+    pub agent: String,
     /// Token optionnel (dépôt privé en https) de l'utilisateur courant ;
     /// jamais affiché dans l'UI.
     pub token: String,
@@ -36,6 +38,7 @@ impl ProjectRow {
             git_repo: self.git_repo.clone(),
             default_branch: self.default_branch.clone(),
             publish_name: self.publish_name.clone(),
+            agent: self.agent.clone(),
         }
     }
 }
@@ -45,7 +48,8 @@ impl ProjectRow {
 pub fn fetch_projects(conn: &Connection, user_id: i64) -> rusqlite::Result<Vec<ProjectRow>> {
     conn.prepare(
         "SELECT p.id, p.name, p.git_repo, p.default_branch, p.publish_name,
-                COALESCE((SELECT t.token FROM project_tokens t WHERE t.project_id = p.id AND t.user_id = ?1), '')
+                COALESCE((SELECT t.token FROM project_tokens t WHERE t.project_id = p.id AND t.user_id = ?1), ''),
+                p.agent
          FROM projects p ORDER BY p.name COLLATE NOCASE",
     )?
     .query_map([user_id], |r| {
@@ -56,6 +60,7 @@ pub fn fetch_projects(conn: &Connection, user_id: i64) -> rusqlite::Result<Vec<P
             default_branch: r.get(3)?,
             publish_name: r.get(4)?,
             token: r.get(5)?,
+            agent: r.get(6)?,
         })
     })?
     .collect()
@@ -91,6 +96,7 @@ pub struct ProjectItemRow {
     pub git_repo: String,
     pub default_branch: String,
     pub publish_name: String,
+    pub agent: String,
     pub tasks: i64,
     /// Un token est configuré pour ce dépôt par l'utilisateur courant
     /// (indicateur, jamais affiché en clair).
@@ -98,17 +104,40 @@ pub struct ProjectItemRow {
 }
 
 impl ProjectItemRow {
+    pub fn is_agent(&self, a: &&str) -> bool {
+        self.agent == *a
+    }
+
+    /// Badge de la carte : agent choisi (vide = défaut du worker, pas de badge).
+    pub fn agent_badge(&self) -> &'static str {
+        match self.agent.as_str() {
+            "claude" => "🤖 Claude Code",
+            "pi" => "🤖 pi",
+            "none" => "👤 humans only",
+            _ => "",
+        }
+    }
+
     /// Renvoie vrai si l'URL peut être rendue en <a href> (sinon texte brut).
     pub fn git_repo_is_link(&self) -> bool {
         is_safe_repo_url(&self.git_repo)
     }
 }
 
+/// Choix de l'agent d'un projet (valeur, libellé).
+pub const AGENT_CHOICES: &[(&str, &str)] = &[
+    ("", "Worker default"),
+    ("claude", "Claude Code"),
+    ("pi", "pi"),
+    ("none", "None (humans only)"),
+];
+
 #[derive(Template)]
 #[template(path = "projects.html")]
 pub struct ProjectsTemplate {
     pub user: Option<CurrentUser>,
     pub projects: Vec<ProjectItemRow>,
+    pub agents: &'static [(&'static str, &'static str)],
     pub error: Option<String>,
 }
 
@@ -129,7 +158,8 @@ pub async fn projects_page(
             "SELECT p.id, p.name, p.git_repo, p.default_branch, p.publish_name,
                     (SELECT COUNT(*) FROM tasks t WHERE t.project_id = p.id),
                     (EXISTS (SELECT 1 FROM project_tokens t
-                             WHERE t.project_id = p.id AND t.user_id = ?1))
+                             WHERE t.project_id = p.id AND t.user_id = ?1)),
+                    p.agent
              FROM projects p ORDER BY p.name COLLATE NOCASE",
         )?
         .query_map([user.id], |r| {
@@ -141,12 +171,14 @@ pub async fn projects_page(
                 publish_name: r.get(4)?,
                 tasks: r.get(5)?,
                 has_token: r.get(6)?,
+                agent: r.get(7)?,
             })
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
     Ok(render(&ProjectsTemplate {
         user: Some(user),
         projects,
+        agents: AGENT_CHOICES,
         error: q.error,
     }))
 }
@@ -162,6 +194,8 @@ pub struct ProjectForm {
     default_branch: String,
     #[serde(default)]
     publish_name: String,
+    #[serde(default)]
+    agent: String,
 }
 
 impl ProjectForm {
@@ -170,8 +204,12 @@ impl ProjectForm {
         (self.name.trim(), self.git_repo.trim(), self.git_token.trim())
     }
 
-    /// Branche de base et nom de publication, validés.
-    fn extras(&self) -> Result<(&str, &str), &'static str> {
+    /// Branche de base, nom de publication et agent, validés.
+    fn extras(&self) -> Result<(&str, &str, &str), &'static str> {
+        let agent = self.agent.trim();
+        if !tikedenn_common::is_valid_project_agent(agent) {
+            return Err("Unknown agent.");
+        }
         let branch = self.default_branch.trim();
         if !branch.is_empty() && !is_safe_branch(branch) {
             return Err("Invalid default branch name.");
@@ -182,7 +220,7 @@ impl ProjectForm {
         {
             return Err("Publish name: letters, digits, '-', '_' or '.' only.");
         }
-        Ok((branch, publish))
+        Ok((branch, publish, agent))
     }
 }
 
@@ -239,14 +277,14 @@ pub async fn create_project(
 ) -> AppResult {
     let (name, repo, token) = f.trimmed();
     let extras = validate_project(name, repo, token).and_then(|_| f.extras());
-    let (branch, publish) = match extras {
+    let (branch, publish, agent) = match extras {
         Ok(e) => e,
         Err(msg) => return Ok(projects_error(msg)),
     };
     let conn = state.conn()?;
     if let Err(e) = conn.execute(
-        "INSERT INTO projects (name, git_repo, default_branch, publish_name) VALUES (?1, ?2, ?3, ?4)",
-        rusqlite::params![name, repo, branch, publish],
+        "INSERT INTO projects (name, git_repo, default_branch, publish_name, agent) VALUES (?1, ?2, ?3, ?4, ?5)",
+        rusqlite::params![name, repo, branch, publish, agent],
     ) {
         return Ok(projects_error(project_write_error(e)?));
     }
@@ -263,14 +301,15 @@ pub async fn update_project(
 ) -> AppResult {
     let (name, repo, token) = f.trimmed();
     let extras = validate_project(name, repo, token).and_then(|_| f.extras());
-    let (branch, publish) = match extras {
+    let (branch, publish, agent) = match extras {
         Ok(e) => e,
         Err(msg) => return Ok(projects_error(msg)),
     };
     let conn = state.conn()?;
     match conn.execute(
-        "UPDATE projects SET name = ?1, git_repo = ?2, default_branch = ?3, publish_name = ?4 WHERE id = ?5",
-        rusqlite::params![name, repo, branch, publish, id],
+        "UPDATE projects SET name = ?1, git_repo = ?2, default_branch = ?3, publish_name = ?4, agent = ?5
+         WHERE id = ?6",
+        rusqlite::params![name, repo, branch, publish, agent, id],
     ) {
         Err(e) => return Ok(projects_error(project_write_error(e)?)),
         // Projet inexistant : ne pas créer de token orphelin (FK).

@@ -10,17 +10,23 @@
   <input name="git_token" type="password" placeholder="Your git token for private repo (optional)" autocomplete="new-password" maxlength="256" class="grow">
   <input name="default_branch" placeholder="Base branch (default: main)" maxlength="200">
   <input name="publish_name" placeholder="publish name (optional)" maxlength="64">
+  <select name="agent" title="Agent run by the worker on this project's tasks">
+    {% for (value, label) in agents %}
+    <option value="{{ value }}">Agent: {{ label }}</option>
+    {% endfor %}
+  </select>
   <button type="submit">Add</button>
 </form>
 
 {% if projects.is_empty() %}
-<p class="empty">No project yet. Projects are shared by all users; they group tasks on the board and link to a git repository. The agents' worker finds the matching local clone by its git remote.</p>
+<p class="empty">No project yet. Projects are shared by all users; they group tasks on the board and link to a git repository. The agents' worker finds the matching local clone by its git remote; set Agent to <em>None</em> for a project of tasks done by humans.</p>
 {% else %}
 <div class="projects">
   {% for p in projects %}
   <div class="card project">
     <div class="card-head">
       <strong class="grow">{{ p.name }}</strong>
+      {% if !p.agent_badge().is_empty() %}<span class="tag agent-badge">{{ p.agent_badge() }}</span>{% endif %}
       <small>{{ p.tasks }} task(s)</small>
     </div>
     {% if !p.git_repo.is_empty() %}
@@ -40,6 +46,13 @@
       <label class="field"><span>Git token</span><input name="git_token" type="password" placeholder="Leave empty to keep the current token" autocomplete="new-password" maxlength="256" class="grow"></label>
       <label class="field"><span>Base branch</span><input name="default_branch" value="{{ p.default_branch }}" placeholder="main (or master)" maxlength="200"></label>
       <label class="field" title="Deploy step: the worker runs `publish <name>` after merging an approved task"><span>Publish name</span><input name="publish_name" value="{{ p.publish_name }}" placeholder="none" maxlength="64"></label>
+      <label class="field" title="Agent run by the worker on this project's tasks; None = tasks for humans, never taken by agents"><span>Agent</span>
+        <select name="agent">
+          {% for (value, label) in agents %}
+          <option value="{{ value }}"{% if p.is_agent(value) %} selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+      </label>
       <button type="submit">Save</button>
     </form>
     <form method="post" action="/projects/{{ p.id }}/delete" class="rowform"

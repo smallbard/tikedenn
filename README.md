@@ -45,7 +45,8 @@ ces transitions sont réservées aux humains (contrôlé par le serveur).
   La colonne *To do* suit l'**ordre de traitement** des agents (rang, badge
   « next », tâches prêtes puis tâches en attente de leurs dépendances, placées
   après celles-ci) ; une tâche **hérite de la priorité** des tâches qui
-  l'attendent (« urgent ↑ #42 »).
+  l'attendent (« urgent ↑ #42 »). Au survol d'une carte, ses dépendances et
+  les tâches qui l'attendent sont mises en évidence.
 - **Tâche** : description et **critères d'acceptation** en Markdown (graphes
   mermaid, onglets Preview / Edit), priorité, dépendances,
   branche git, pièces jointes (BLOB SQLite, 10 Mo max) et **journal**

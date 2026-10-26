@@ -1,4 +1,4 @@
-<div class="card task t-{{ task.status }}" draggable="true" data-id="{{ task.id }}">
+<div class="card task t-{{ task.status }}" draggable="true" data-id="{{ task.id }}" data-deps="{{ task.depends_on_text() }}">
   <div class="card-head">
     {% if task.rank > 0 %}<span class="rank" title="Processing order in To do">{{ task.rank }}</span>{% endif %}
     <span class="task-id">#{{ task.id }}</span>

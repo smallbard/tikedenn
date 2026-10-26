@@ -449,3 +449,24 @@ form.rowform label.field select { min-width: 0; width: 100%; }
 }
 .col-sep::before, .col-sep::after { content: ""; flex: 1; border-top: 1px dashed var(--border); }
 .col-sep ~ .card.task { opacity: 0.75; }
+
+/* Survol d'une carte : dépendances (orange) et tâches qui l'attendent (bleu) */
+.card.task { position: relative; transition: opacity 0.12s; }
+.board.dep-hover .card.task { opacity: 0.35; }
+.board.dep-hover .card.task.dep-focus,
+.board.dep-hover .card.task.dep-up,
+.board.dep-hover .card.task.dep-down { opacity: 1; }
+.card.task.dep-focus { outline: 2px solid var(--text); }
+.card.task.dep-up { outline: 2px solid #e0a95e; }
+.card.task.dep-down { outline: 2px dashed var(--accent); }
+.card.task.dep-up::after, .card.task.dep-down::after {
+  position: absolute;
+  top: -0.6rem;
+  right: 0.5rem;
+  font-size: 0.65rem;
+  padding: 0 0.35rem;
+  border-radius: 4px;
+  color: #0d1117;
+}
+.card.task.dep-up::after { content: "needed first"; background: #e0a95e; }
+.card.task.dep-down::after { content: "waits for it"; background: var(--accent); }

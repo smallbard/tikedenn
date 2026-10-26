@@ -53,7 +53,8 @@ ces transitions sont réservées aux humains (contrôlé par le serveur).
   (commentaires, rapports d'agents, revues, changements d'état, logs de
   déploiement).
 - **Revue** : sur la page de la tâche et sur la page de **diff** (branche vs
-  base depuis le point de divergence, clone en cache par projet), panneau
+  base depuis le point de divergence, clone en cache par projet, avec
+  coloration syntaxique des fichiers), panneau
   *Approve* / *Request changes*. Badge « To review » dans la navigation.
 - **Projets** partagés : dépôt git (+ token personnel pour un dépôt privé
   https), branche de base (défaut main/master), nom `publish` et **agent** :

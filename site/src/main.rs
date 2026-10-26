@@ -5,6 +5,7 @@ mod board;
 mod db;
 mod files;
 mod git_diff;
+mod highlight;
 mod markdown;
 mod mcp;
 mod notify;

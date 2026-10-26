@@ -282,13 +282,15 @@ form.delete-task { margin-top: 1.2rem; }
 .diff-file { border: 1px solid var(--border); border-radius: 6px; margin-bottom: 0.8rem; overflow: hidden; }
 .diff-file summary { padding: 0.5rem 0.8rem; background: var(--bg); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; cursor: pointer; }
 .diff-stats { float: right; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.85rem; }
-.diff-add-n { color: #1a7f37; }
-.diff-del-n { color: #cf222e; }
-.diff { margin: 0; padding: 0.3rem 0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.85rem; overflow-x: auto; }
-.diff span { display: block; white-space: pre; padding: 0 0.8rem; }
-.diff-add { background: #e6f4e6; color: #1a7f37; }
-.diff-del { background: #fdecec; color: #cf222e; }
-.diff-hdr { background: var(--bg); color: #6e7781; }
+.diff-add-n { color: #3fb950; }
+.diff-del-n { color: #f85149; }
+/* Lignes : fond vert / rouge discret et marque à gauche, le texte garde la
+   coloration syntaxique (styles en ligne, thème OneHalfDark). */
+.diff { margin: 0; padding: 0.3rem 0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.85rem; overflow-x: auto; background: #1b1e24; color: #dcdfe4; }
+.diff > span { display: block; white-space: pre; padding: 0 0.8rem; border-left: 3px solid transparent; min-height: 1.3em; }
+.diff > .diff-add { background: rgba(46, 160, 67, 0.16); border-left-color: #3fb950; }
+.diff > .diff-del { background: rgba(248, 81, 73, 0.14); border-left-color: #f85149; }
+.diff > .diff-hdr { background: var(--bg); color: var(--muted); }
 /* Badge « token configuré » sur la carte projet */
 .token-badge { margin-left: 0.4rem; color: #6e7781; cursor: help; }
 

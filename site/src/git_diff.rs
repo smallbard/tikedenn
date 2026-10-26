@@ -3,6 +3,7 @@
 //! divergence, rendu par fichier. C'est la page de revue humaine.
 
 use crate::auth::CurrentUser;
+use crate::highlight;
 use crate::board::{fetch_one_task, is_safe_branch, TaskRow};
 use crate::projects::{is_http_url, is_safe_repo_url};
 use crate::web::{render, AppResult};
@@ -22,7 +23,8 @@ use std::sync::{Arc, Mutex};
 pub struct DiffLine {
     /// "add" | "del" | "ctx" | "hdr".
     pub kind: &'static str,
-    pub text: String,
+    /// Contenu HTML de la ligne, échappé et coloré si possible.
+    pub html: String,
 }
 
 /// Un fichier modifié, avec ses lignes de diff.
@@ -59,8 +61,16 @@ fn find_commit_named<'a>(
     })
 }
 
+/// Versions colorées (avant, après) d'un fichier, indexées par numéro de
+/// ligne − 1 ; vides si le langage est inconnu.
+#[derive(Default)]
+struct Colored {
+    old: Vec<String>,
+    new: Vec<String>,
+}
+
 /// Lignes d'un patch texte, avec le nombre de lignes ajoutées / supprimées.
-fn patch_lines(patch: &Patch) -> Result<(Vec<DiffLine>, usize, usize), String> {
+fn patch_lines(patch: &Patch, colored: &Colored) -> Result<(Vec<DiffLine>, usize, usize), String> {
     let mut lines = vec![];
     let (mut added, mut deleted) = (0, 0);
     for h in 0..patch.num_hunks() {
@@ -83,13 +93,46 @@ fn patch_lines(patch: &Patch) -> Result<(Vec<DiffLine>, usize, usize), String> {
                 ' ' | '=' | '>' | '<' => "ctx",
                 _ => "hdr",
             };
-            lines.push(DiffLine {
-                kind,
-                text: String::from_utf8_lossy(line.content()).trim_end().to_string(),
-            });
+            let pick = |v: &Vec<String>, n: Option<u32>| n.and_then(|n| v.get(n as usize - 1)).cloned();
+            let html = match kind {
+                "del" => pick(&colored.old, line.old_lineno()),
+                "hdr" => None,
+                _ => pick(&colored.new, line.new_lineno()),
+            }
+            .unwrap_or_else(|| highlight::escape(String::from_utf8_lossy(line.content()).trim_end()));
+            lines.push(DiffLine { kind, html });
         }
     }
     Ok((lines, added, deleted))
+}
+
+/// Octets de sources coloriés au plus par affichage du diff.
+const HIGHLIGHT_BUDGET: usize = 2 * 1024 * 1024;
+
+/// Colore les deux versions d'un fichier, jusqu'à la dernière ligne que le
+/// patch affiche.
+fn colorize(repo: &Repository, patch: &Patch, path: &str, delta: &git2::DiffDelta, budget: &mut usize) -> Colored {
+    let (mut last_old, mut last_new) = (0, 0);
+    for h in 0..patch.num_hunks() {
+        if let Ok((hunk, _)) = patch.hunk(h) {
+            last_old = last_old.max(hunk.old_start() + hunk.old_lines());
+            last_new = last_new.max(hunk.new_start() + hunk.new_lines());
+        }
+    }
+    let mut side = |file: git2::DiffFile, upto: u32| -> Vec<String> {
+        if file.id().is_zero() || upto == 0 {
+            return vec![];
+        }
+        let Ok(blob) = repo.find_blob(file.id()) else { return vec![] };
+        let len = blob.content().len();
+        if blob.is_binary() || len > *budget || len > highlight::MAX_FILE_BYTES {
+            return vec![];
+        }
+        let Ok(text) = std::str::from_utf8(blob.content()) else { return vec![] };
+        *budget -= len;
+        highlight::highlight_lines(path, text, upto as usize).unwrap_or_default()
+    };
+    Colored { old: side(delta.old_file(), last_old), new: side(delta.new_file(), last_new) }
 }
 
 /// Répertoire des clones en cache (un dépôt nu par projet), réutilisés d'un
@@ -198,6 +241,8 @@ fn compute_branch_diff(
         .map_err(|e| format!("Could not compute the diff: {e}"))?;
 
     let mut files = vec![];
+    // Volume total colorié, pour garder un affichage rapide sur un gros diff.
+    let mut budget = HIGHLIGHT_BUDGET;
     for (idx, delta) in diff.deltas().enumerate() {
         let path = delta
             .new_file()
@@ -219,7 +264,8 @@ fn compute_branch_diff(
                 continue;
             }
         };
-        let (lines, added, deleted) = patch_lines(&patch)?;
+        let colored = colorize(&repo, &patch, &path, &delta, &mut budget);
+        let (lines, added, deleted) = patch_lines(&patch, &colored)?;
         files.push(DiffFile {
             path,
             added,

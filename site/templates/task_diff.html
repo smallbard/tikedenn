@@ -31,7 +31,7 @@
   {% if f.binary %}
   <p class="empty">Binary file differs.</p>
   {% else %}
-  <pre class="diff">{% for l in f.lines %}<span class="diff-{{ l.kind }}">{{ l.text }}</span>{% endfor %}</pre>
+  <pre class="diff">{% for l in f.lines %}<span class="diff-{{ l.kind }}">{{ l.html|safe }}</span>{% endfor %}</pre>
   {% endif %}
 </details>
 {% endfor %}

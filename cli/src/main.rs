@@ -455,7 +455,7 @@ fn run_api(cmd: Cmd, cfg: &Config, client: &Client, json: bool) -> Result<()> {
             let repo = git::find_local_repo(cfg, &project)
                 .with_context(|| format!("No local clone of project {}.", project.name))?;
             let task = client.claim(id, Some(120))?;
-            let ctx = worker::Ctx { cfg: cfg.clone(), client: client.clone(), claimer: format!("{}/{}", me.username, me.token) };
+            let ctx = worker::Ctx::new(cfg.clone(), client.clone(), format!("{}/{}", me.username, me.token));
             deploy::deploy_and_report(&ctx, task, &project, &repo, dry_run, &cfg.worker.agent);
         }
         Cmd::Worker { agent, max_parallel, poll, project, no_deploy, deploy_only, once } => {

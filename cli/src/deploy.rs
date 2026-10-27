@@ -67,7 +67,7 @@ fn merge_and_push(ctx: &Ctx, task: &TaskDetail, repo: &Path, base: &str, dry_run
         git(repo, &["worktree", "add", "--detach", &wt.to_string_lossy(), &format!("origin/{base}")])?;
         if !branch.is_empty() {
             if !remote_branch_exists(repo, branch) {
-                bail!("Branch `{branch}` is not on the remote (was it pushed?).");
+                bail!("Branch `{branch}` is not on the remote: nothing was pushed, so there is nothing to deploy. Move the task back to To do.");
             }
             let message = format!("Merge task #{id}: {}\n\nBranch: {branch}", task.summary.title);
             if let Err(e) = git(&wt, &["merge", "--no-ff", "-m", &message, &format!("origin/{branch}")]) {
@@ -218,7 +218,7 @@ fn rebase_with_agent(ctx: &Ctx, agent: &str, task: &TaskDetail, project: &Projec
 
     println!("[#{id}] merge conflict: asking {agent} to rebase `{branch}` on `{base}`");
     let announce = format!("Merge conflict with `{base}`: the worker asked {agent} to rebase `{branch}`");
-    let (outcome, log_path) = run_agent(ctx, agent, id, &wt, &rebase_prompt(task, c), "deploy", &announce)?;
+    let (outcome, log_path, _limit) = run_agent(ctx, agent, id, &wt, &rebase_prompt(task, c), "deploy", &announce)?;
     let tail = tail_file(&log_path, 30, 3000);
     let what = match &outcome {
         Outcome::Lost(reason) => bail!("the task was taken over ({reason})."),

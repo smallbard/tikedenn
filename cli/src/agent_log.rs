@@ -8,6 +8,48 @@ use serde_json::Value;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::time::Instant;
 
+/// Limite d'utilisation de l'agent atteinte (session, quota…).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Limit {
+    pub message: String,
+    /// Heure de remise à zéro (secondes Unix), si l'agent la donne.
+    pub resets_at: Option<u64>,
+}
+
+/// Repère une limite d'utilisation dans un événement : `rate_limit_event`
+/// refusé, ou résultat final du type « You've hit your session limit ».
+pub fn limit_in(v: &Value, current: Option<Limit>) -> Option<Limit> {
+    match v.get("type").and_then(Value::as_str) {
+        Some("rate_limit_event") => {
+            let info = v.get("rate_limit_info")?;
+            if info.get("status").and_then(Value::as_str) != Some("rejected") {
+                return current;
+            }
+            let resets_at = info.get("resetsAt").and_then(Value::as_u64);
+            Some(Limit { message: "Usage limit reached".into(), resets_at: resets_at.or(current.and_then(|l| l.resets_at)) })
+        }
+        Some("result") => {
+            let text = v.get("result").and_then(Value::as_str).unwrap_or("");
+            if is_limit_message(text) {
+                Some(Limit { message: text.trim().to_string(), resets_at: current.and_then(|l| l.resets_at) })
+            } else {
+                current
+            }
+        }
+        _ => current,
+    }
+}
+
+/// Message de limite (sortie de Claude Code, ou d'un autre agent en texte).
+pub fn is_limit_message(text: &str) -> bool {
+    let t = text.to_lowercase();
+    t.len() < 400
+        && ((t.contains("hit your") && t.contains("limit"))
+            || t.contains("usage limit reached")
+            || t.contains("rate limit exceeded")
+            || t.contains("quota exceeded"))
+}
+
 /// Complète une commande `claude -p` sans format de sortie explicite pour
 /// qu'elle écrive ses événements au fil de l'eau (configurations existantes).
 pub fn ensure_streaming(mut cmd: Vec<String>) -> Vec<String> {
@@ -20,28 +62,39 @@ pub fn ensure_streaming(mut cmd: Vec<String>) -> Vec<String> {
     cmd
 }
 
-/// Recopie la sortie de l'agent dans le journal, ligne par ligne, mise en forme.
-pub fn pump(input: impl Read, mut out: impl Write, start: Instant) {
+/// Recopie la sortie de l'agent dans le journal, ligne par ligne, mise en
+/// forme ; renvoie la limite d'utilisation rencontrée, le cas échéant.
+pub fn pump(input: impl Read, mut out: impl Write, start: Instant) -> Option<Limit> {
+    let mut limit = None;
     for line in BufReader::new(input).split(b'\n') {
         let Ok(line) = line else { break };
         let line = String::from_utf8_lossy(&line);
         let text = match serde_json::from_str::<Value>(&line) {
-            Ok(v) if v.get("type").is_some() => match format_event(&v) {
-                Some(t) => t,
-                None => continue,
-            },
-            _ => line.into_owned(),
+            Ok(v) if v.get("type").is_some() => {
+                limit = limit_in(&v, limit);
+                match format_event(&v) {
+                    Some(t) => t,
+                    None => continue,
+                }
+            }
+            _ => {
+                if is_limit_message(&line) {
+                    limit = Some(Limit { message: line.trim().to_string(), resets_at: None });
+                }
+                line.into_owned()
+            }
         };
         let secs = start.elapsed().as_secs();
         let stamp = format!("[{:02}:{:02}:{:02}]", secs / 3600, secs / 60 % 60, secs % 60);
         for (i, l) in text.lines().enumerate() {
             let prefix = if i == 0 { stamp.as_str() } else { "          " };
             if writeln!(out, "{prefix} {l}").is_err() {
-                return;
+                return limit;
             }
         }
         let _ = out.flush();
     }
+    limit
 }
 
 /// Une ligne (ou plusieurs) par événement intéressant ; `None` pour le reste.
@@ -169,10 +222,26 @@ mod tests {
     }
 
     #[test]
+    fn detects_usage_limits() {
+        let limited = "{\"type\":\"rate_limit_event\",\"rate_limit_info\":{\"status\":\"rejected\",\"resetsAt\":1793034000}}\n\
+            {\"type\":\"result\",\"subtype\":\"success\",\"result\":\"You've hit your session limit · resets 11pm (Europe/Paris)\"}\n";
+        let limit = pump(limited.as_bytes(), Vec::new(), Instant::now()).unwrap();
+        assert_eq!(limit.resets_at, Some(1793034000));
+        assert!(limit.message.contains("session limit"));
+        // Événement « allowed » ou agent qui parle de limites : pas de limite.
+        let fine = "{\"type\":\"rate_limit_event\",\"rate_limit_info\":{\"status\":\"allowed\",\"resetsAt\":1}}\n\
+            {\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"You've hit your session limit\"}]}}\n\
+            {\"type\":\"result\",\"subtype\":\"success\",\"result\":\"Added a rate limiter; the limit is 600 req/min.\"}\n";
+        assert_eq!(pump(fine.as_bytes(), Vec::new(), Instant::now()), None);
+        // Agent en texte (pi…).
+        assert!(pump("Error: usage limit reached\n".as_bytes(), Vec::new(), Instant::now()).is_some());
+    }
+
+    #[test]
     fn pump_stamps_lines_and_keeps_plain_text() {
         let input = "plain output\n{\"type\":\"rate_limit_event\"}\n{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"a\\nb\"}]}}\n";
         let mut out = Vec::new();
-        pump(input.as_bytes(), &mut out, Instant::now());
+        assert_eq!(pump(input.as_bytes(), &mut out, Instant::now()), None);
         assert_eq!(String::from_utf8(out).unwrap(), "[00:00:00] plain output\n[00:00:00] 💬 a\n           b\n");
     }
 }

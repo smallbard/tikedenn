@@ -12,6 +12,7 @@ use crate::render::task_markdown;
 use anyhow::{bail, Context, Result};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tikedenn_common::api::{ClaimNext, Project, TaskDetail};
@@ -38,7 +39,34 @@ pub struct Ctx {
     pub client: Client,
     /// Identité de prise en charge du token (« utilisateur/agent »).
     pub claimer: String,
+    /// Travail des agents suspendu jusqu'à cette heure (limite d'utilisation
+    /// atteinte, agent qui échoue aussitôt lancé).
+    pub pause: Arc<Mutex<Option<SystemTime>>>,
 }
+
+impl Ctx {
+    pub fn new(cfg: Config, client: Client, claimer: String) -> Ctx {
+        Ctx { cfg, client, claimer, pause: Arc::new(Mutex::new(None)) }
+    }
+
+    fn pause_until(&self, until: SystemTime) {
+        let mut p = self.pause.lock().unwrap_or_else(|e| e.into_inner());
+        if p.is_none_or(|cur| cur < until) {
+            *p = Some(until);
+        }
+    }
+
+    /// Temps restant avant de relancer des agents ; `None` si pas de pause.
+    fn paused_for(&self) -> Option<Duration> {
+        let p = *self.pause.lock().unwrap_or_else(|e| e.into_inner());
+        p.and_then(|until| until.duration_since(SystemTime::now()).ok())
+    }
+}
+
+/// Pause après un agent qui s'arrête aussitôt sans rien produire.
+const QUICK_FAILURE_PAUSE: Duration = Duration::from_secs(15 * 60);
+/// En dessous, une exécution sans résultat est un échec « immédiat ».
+const QUICK_FAILURE: Duration = Duration::from_secs(120);
 
 fn timestamp() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
@@ -173,7 +201,7 @@ pub(crate) fn run_agent(
     prompt: &str,
     status: &str,
     announce: &str,
-) -> Result<(Outcome, PathBuf)> {
+) -> Result<(Outcome, PathBuf, Option<agent_log::Limit>)> {
     let cmd: Vec<String> = agent_log::ensure_streaming(agent_command(&ctx.cfg, agent)?)
         .into_iter()
         .map(|a| a.replace("{prompt}", prompt))
@@ -200,8 +228,7 @@ pub(crate) fn run_agent(
     let stdout = child.stdout.take().context("No agent output")?;
     let (pumped_tx, pumped) = std::sync::mpsc::channel();
     thread::spawn(move || {
-        agent_log::pump(stdout, log, started);
-        let _ = pumped_tx.send(());
+        let _ = pumped_tx.send(agent_log::pump(stdout, log, started));
     });
 
     let timeout = Duration::from_secs(ctx.cfg.worker.agent_timeout_minutes * 60);
@@ -242,8 +269,8 @@ pub(crate) fn run_agent(
     };
 
     // Fin du journal (un processus lancé par l'agent peut garder la sortie ouverte).
-    let _ = pumped.recv_timeout(Duration::from_secs(5));
-    Ok((outcome, log_path))
+    let limit = pumped.recv_timeout(Duration::from_secs(5)).ok().flatten();
+    Ok((outcome, log_path, limit))
 }
 
 /// Traite une tâche prise en charge : worktree, agent, filet de sécurité
@@ -265,16 +292,20 @@ fn run_task(ctx: &Ctx, agent: &str, task: TaskDetail, project: Project, repo: Pa
     let task = ctx.client.task(id)?;
 
     let mut prompt = agent_prompt(&task, &branch, &base);
+    // Changements non commités d'une exécution précédente (agent arrêté par
+    // une limite…) : l'agent repart de là.
+    let resumed = resumed || !git::is_clean(&wt);
     let announce = if resumed {
         prompt.push_str(&format!(
-            "\nNote: a previous run on this task was interrupted (worker stopped). The worktree may already hold part \
+            "\nNote: a previous run on this task was interrupted. The worktree may already hold part \
              of the work: check `git status`, `git log {base}..HEAD` and the task log before continuing.\n"
         ));
         format!("Worker resumed {agent} on branch `{branch}` after an interruption")
     } else {
         format!("Worker started {agent} on branch `{branch}`")
     };
-    let (outcome, log_path) = run_agent(ctx, agent, id, &wt, &prompt, "progress", &announce)?;
+    let started = Instant::now();
+    let (outcome, log_path, limit) = run_agent(ctx, agent, id, &wt, &prompt, "progress", &announce)?;
     if let Outcome::Lost(reason) = &outcome {
         println!("[#{id}] stopped: the task was taken over ({reason}).");
         return Ok(());
@@ -283,6 +314,7 @@ fn run_task(ctx: &Ctx, agent: &str, task: TaskDetail, project: Project, repo: Pa
     // la tâche (jamais sur la base).
     let pushed = push_leftovers(&wt, &branch, &base);
     let dirty = !git::is_clean(&wt);
+    let produced = dirty || remote_branch_exists(&wt, &branch);
     let task = ctx.client.task(id)?;
     let still_mine = task.summary.status == "progress" && task.summary.claimed_by.as_deref() == Some(&ctx.claimer);
     if still_mine {
@@ -301,6 +333,29 @@ fn run_task(ctx: &Ctx, agent: &str, task: TaskDetail, project: Project, repo: Pa
             note.push_str(&format!(" Uncommitted changes remain in {}.", wt.display()));
         }
         note.push_str(&format!("\n\nLast output:\n```\n{}\n```", tail_file(&log_path, 40, 4000)));
+        // Limite d'utilisation, ou échec immédiat sans rien produire : rien à
+        // relire, la tâche retourne en todo (le worktree est conservé) et le
+        // worker suspend les agents au lieu de vider la file.
+        let quick_failure = !produced && started.elapsed() < QUICK_FAILURE;
+        if limit.is_some() || quick_failure {
+            let until = match limit.as_ref().and_then(|l| l.resets_at) {
+                Some(t) => UNIX_EPOCH + Duration::from_secs(t) + Duration::from_secs(60),
+                None => SystemTime::now() + QUICK_FAILURE_PAUSE,
+            };
+            ctx.pause_until(until);
+            let minutes = until.duration_since(SystemTime::now()).map_or(0, |d| d.as_secs().div_ceil(60));
+            let why = match &limit {
+                Some(l) => format!("The agent ({agent}) hit a usage limit: {}", l.message),
+                None => format!("The agent ({agent}) stopped right after starting, without producing anything."),
+            };
+            let note = format!(
+                "{why} Back to todo; the worker pauses agents for about {minutes} min.\n\nLast output:\n```\n{}\n```",
+                tail_file(&log_path, 15, 1500)
+            );
+            ctx.client.release(id, Some("todo"), Some(&note))?;
+            eprintln!("[#{id}] {why} Back to todo; agents paused for about {minutes} min.");
+            return Ok(());
+        }
         ctx.client.move_to(id, "review", Some(&note))?;
         println!("[#{id}] agent did not submit; moved to review.");
     } else {
@@ -413,7 +468,7 @@ pub fn run(cfg: Config, opts: WorkerOpts) -> Result<()> {
     if me.scope != "write" {
         bail!("The worker needs a read & write token.");
     }
-    let ctx = Ctx { claimer: format!("{}/{}", me.username, me.token), cfg, client };
+    let ctx = Ctx::new(cfg, client, format!("{}/{}", me.username, me.token));
     if opts.work {
         agent_command(&ctx.cfg, &opts.agent)?;
     }
@@ -428,6 +483,7 @@ pub fn run(cfg: Config, opts: WorkerOpts) -> Result<()> {
     let mut agents: Vec<(i64, JoinHandle<()>)> = vec![];
     let mut deploying: Option<JoinHandle<()>> = None;
     let mut warned_empty = false;
+    let mut pause_announced = false;
     loop {
         agents.retain(|(_, h)| !h.is_finished());
         if deploying.as_ref().is_some_and(|h| h.is_finished()) {
@@ -466,9 +522,20 @@ pub fn run(cfg: Config, opts: WorkerOpts) -> Result<()> {
                 Err(e) => eprintln!("Could not claim a deploy task: {e:#}"),
             }
         }
+        // Pause des agents (limite d'utilisation…) : les déploiements continuent.
+        let paused = ctx.paused_for();
+        match paused {
+            Some(d) if !pause_announced => {
+                println!("Agents paused for {} min (usage limit or failing agent).", d.as_secs().div_ceil(60));
+                pause_announced = true;
+            }
+            None => pause_announced = false,
+            _ => {}
+        }
+        let work = opts.work && paused.is_none();
         // D'abord les tâches interrompues (worker arrêté pendant qu'un agent
         // travaillait), avant d'en prendre de nouvelles.
-        if opts.work && agents.len() < opts.max_parallel {
+        if work && agents.len() < opts.max_parallel {
             let running: Vec<i64> = agents.iter().map(|(id, _)| *id).collect();
             for (id, project, repo) in interrupted_tasks(&ctx, &local, &running) {
                 if agents.len() >= opts.max_parallel {
@@ -485,7 +552,7 @@ pub fn run(cfg: Config, opts: WorkerOpts) -> Result<()> {
                 }
             }
         }
-        while opts.work && agents.len() < opts.max_parallel && !local.is_empty() {
+        while work && agents.len() < opts.max_parallel && !local.is_empty() {
             let req = ClaimNext { projects: ids.clone(), status: Some("todo".into()), ttl_minutes: Some(CLAIM_TTL_MINUTES) };
             match ctx.client.claim_next(&req) {
                 Ok(Some(task)) => {

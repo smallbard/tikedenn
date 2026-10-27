@@ -132,6 +132,13 @@ si besoin puis passe en revue), `tkd release`, `tkd create`, `tkd update`, `tkd 
    (marqueur `~/.cache/tikedenn/running/task-<id>` avec le pid). L'agent
    repart dans le même worktree, prévenu que du travail peut déjà s'y
    trouver.
+   **Limite d'utilisation** (« You've hit your session limit », événement
+   `rate_limit_event` refusé) ou agent qui s'arrête en moins de 2 min sans
+   rien produire : la tâche retourne en **todo** (pas en review : il n'y a
+   rien à relire), le worktree est conservé (l'agent suivant est prévenu des
+   changements non commités) et le worker suspend les agents jusqu'à la
+   remise à zéro de la limite (sinon 15 min) au lieu de vider la file ; les
+   déploiements continuent.
 4. Déploie les tâches approuvées : merge `--no-ff` dans un worktree détaché,
    push de la base, `publish <nom> --repo <dossier>` (le clone de
    l'utilisateur s'il est propre et sur la base, sinon le worktree), log de

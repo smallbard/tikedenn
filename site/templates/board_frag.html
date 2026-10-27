@@ -4,6 +4,12 @@
      hx-get="/dashboard/board?project={{ selected_project }}"
      hx-trigger="every 20s [!document.querySelector('.dragging')]"
      hx-swap="outerHTML">
+  <!-- Mobile : une seule colonne, choisie ici (voir dashboard.html). -->
+  <select class="col-picker" aria-label="Column">
+    {% for c in columns %}
+    <option value="{{ c.status.value }}">{{ c.status.label }} ({{ c.tasks.len() }})</option>
+    {% endfor %}
+  </select>
   {% for c in columns %}
   <section class="col col-{{ c.status.value }}" id="col-{{ c.status.value }}" data-status="{{ c.status.value }}">
     <header>{{ c.status.label }} <span class="count">{{ c.tasks.len() }}</span></header>

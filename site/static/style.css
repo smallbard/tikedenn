@@ -119,6 +119,18 @@ button:hover { filter: brightness(1.1); }
 }
 @media (max-width: 900px) { .board { grid-template-columns: repeat(2, 1fr); } }
 @media (max-width: 560px) { .board { grid-template-columns: 1fr; } }
+/* Mobile : une seule colonne, choisie dans la liste déroulante. */
+.col-picker { display: none; }
+@media (max-width: 560px) {
+  #board .col-picker { display: block; width: 100%; font-size: 1rem; }
+  #board-wrap[data-show="draft"] .col:not(.col-draft),
+  #board-wrap[data-show="todo"] .col:not(.col-todo),
+  #board-wrap[data-show="progress"] .col:not(.col-progress),
+  #board-wrap[data-show="review"] .col:not(.col-review),
+  #board-wrap[data-show="deploy"] .col:not(.col-deploy),
+  #board-wrap[data-show="done"] .col:not(.col-done) { display: none; }
+  #board-wrap .col > header { display: none; }
+}
 /* Écrans larges : toutes les colonnes sur la même ligne. */
 @media (min-width: 1400px) {
   .board { grid-template-columns: repeat(6, 1fr); }

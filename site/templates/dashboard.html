@@ -15,12 +15,34 @@
 
 <a class="page-btn" href="/tasks/new?project={{ selected_project }}">New task</a>
 
+<div id="board-wrap" data-show="review">
 {% include "board_frag.html" %}
+</div>
 
 <!-- Drag & drop : glisser une carte sur une colonne change son état
      (POST /tasks/{id}/move). Événements délégués au document : le tableau
      est remplacé à chaque rafraîchissement htmx. -->
 <script>
+// Mobile : colonne affichée choisie dans la liste (To review par défaut,
+// ou celle de l'ancre #col-…) ; le choix survit aux rafraîchissements.
+(function () {
+  var wrap = document.getElementById('board-wrap');
+  var m = location.hash.match(/^#col-(\w+)$/);
+  if (m) wrap.dataset.show = m[1];
+  function sync() {
+    var pick = wrap.querySelector('.col-picker');
+    if (pick) pick.value = wrap.dataset.show;
+  }
+  sync();
+  document.body.addEventListener('htmx:afterSwap', sync);
+  window.addEventListener('hashchange', function () {
+    var m = location.hash.match(/^#col-(\w+)$/);
+    if (m) { wrap.dataset.show = m[1]; sync(); }
+  });
+  document.addEventListener('change', function (e) {
+    if (e.target.classList && e.target.classList.contains('col-picker')) wrap.dataset.show = e.target.value;
+  });
+})();
 (function () {
   function colOf(e) { return e.target.closest && e.target.closest('#board .col'); }
   document.addEventListener('dragstart', function (e) {

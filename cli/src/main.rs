@@ -359,7 +359,7 @@ fn run_api(cmd: Cmd, cfg: &Config, client: &Client, json: bool) -> Result<()> {
                 }
             }
         }
-        Cmd::Claim { id, ttl } => print_task(json, &client.claim(id, ttl)?)?,
+        Cmd::Claim { id, ttl } => print_task(json, &client.claim(id, ttl, None)?)?,
         Cmd::Release { id, message: m, keep_state } => {
             let note = m.as_deref().map(message).transpose()?;
             let status = if keep_state { None } else { Some("todo") };
@@ -454,7 +454,7 @@ fn run_api(cmd: Cmd, cfg: &Config, client: &Client, json: bool) -> Result<()> {
             let project = task.repo.clone().context("The task has no project.")?;
             let repo = git::find_local_repo(cfg, &project)
                 .with_context(|| format!("No local clone of project {}.", project.name))?;
-            let task = client.claim(id, Some(120))?;
+            let task = client.claim(id, Some(120), Some("deploy"))?;
             let ctx = worker::Ctx::new(cfg.clone(), client.clone(), format!("{}/{}", me.username, me.token));
             deploy::deploy_and_report(&ctx, task, &project, &repo, dry_run, &cfg.worker.agent);
         }

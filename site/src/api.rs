@@ -228,7 +228,7 @@ fn sorted(v: &[i64]) -> Vec<i64> {
 }
 
 pub fn op_claim(conn: &Connection, actor: &Actor, id: i64, c: &Claim) -> ApiResult<TaskDetail> {
-    workflow::claim(conn, actor, id, c.ttl_minutes)?;
+    workflow::claim(conn, actor, id, c.ttl_minutes, c.status.as_deref())?;
     op_get_task(conn, actor, id)
 }
 
@@ -484,7 +484,7 @@ mod tests {
         assert!(op_patch_task(&conn, &a, 1, &cycle).is_err());
         let empty = PatchTask { title: Some(" ".into()), ..Default::default() };
         assert!(op_patch_task(&conn, &a, 1, &empty).is_err());
-        workflow::claim(&conn, &a, 1, None).unwrap();
+        workflow::claim(&conn, &a, 1, None, None).unwrap();
         let retitle = PatchTask { title: Some("x".into()), ..Default::default() };
         assert!(op_patch_task(&conn, &agent("pi"), 1, &retitle).is_err());
         assert_eq!(op_patch_task(&conn, &a, 1, &retitle).unwrap().summary.title, "x");

@@ -245,7 +245,7 @@ pub(crate) fn run_agent(
         }
         if renewing && last_renew.elapsed() > renew_every {
             last_renew = Instant::now();
-            if let Err(e) = ctx.client.claim(id, Some(CLAIM_TTL_MINUTES)) {
+            if let Err(e) = ctx.client.claim(id, Some(CLAIM_TTL_MINUTES), Some(status)) {
                 match status_of(&e) {
                     Some(404) | Some(409) => {
                         // Soumise par l'agent (a changé d'état) : on arrête de
@@ -541,7 +541,7 @@ pub fn run(cfg: Config, opts: WorkerOpts) -> Result<()> {
                 if agents.len() >= opts.max_parallel {
                     break;
                 }
-                match ctx.client.claim(id, Some(CLAIM_TTL_MINUTES)) {
+                match ctx.client.claim(id, Some(CLAIM_TTL_MINUTES), Some("progress")) {
                     Ok(task) => {
                         claimed = true;
                         println!("[#{id}] resuming an interrupted task.");

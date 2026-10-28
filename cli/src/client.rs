@@ -111,8 +111,10 @@ impl Client {
         self.send("PATCH", &format!("/tasks/{id}"), p)
     }
 
-    pub fn claim(&self, id: i64, ttl_minutes: Option<i64>) -> Result<TaskDetail> {
-        self.send("POST", &format!("/tasks/{id}/claim"), &Claim { ttl_minutes })
+    /// `status` : seulement si la tâche est encore dans cet état.
+    pub fn claim(&self, id: i64, ttl_minutes: Option<i64>, status: Option<&str>) -> Result<TaskDetail> {
+        let status = status.map(String::from);
+        self.send("POST", &format!("/tasks/{id}/claim"), &Claim { ttl_minutes, status })
     }
 
     /// Prochaine tâche prise en charge, ou None (204) s'il n'y en a pas.

@@ -259,9 +259,12 @@ fn clamp_ttl(ttl: Option<i64>) -> i64 {
 /// Une tâche `todo` passe en `progress` ; `progress` (bail expiré d'un agent
 /// disparu) et `deploy` restent dans leur état. Renvoie vrai si la tâche
 /// vient d'être prise (faux pour un simple renouvellement).
-pub fn claim(conn: &Connection, actor: &Actor, id: i64, ttl: Option<i64>) -> WfResult<bool> {
+pub fn claim(conn: &Connection, actor: &Actor, id: i64, ttl: Option<i64>, expect: Option<&str>) -> WfResult<bool> {
     let st = task_state(conn, id)?;
     check_agent_allowed(actor, &st)?;
+    if let Some(expect) = expect.filter(|e| *e != st.status) {
+        return Err(WfError::Conflict(format!("The task is no longer in {expect} (it is in {}).", st.status)));
+    }
     if !matches!(st.status.as_str(), "todo" | "progress" | "deploy") {
         return Err(WfError::Conflict(format!(
             "Only tasks in todo, progress or deploy can be claimed (this one is in {}).",
@@ -363,7 +366,7 @@ pub fn claim_next(
     }
     // Un autre agent peut prendre un candidat entre-temps : on passe au suivant.
     for id in ids {
-        match claim(conn, actor, id, ttl) {
+        match claim(conn, actor, id, ttl, None) {
             Ok(_) => return Ok(Some(id)),
             Err(WfError::Conflict(_)) => continue,
             Err(e) => return Err(e),
@@ -412,8 +415,8 @@ mod tests {
         assert_eq!(claim_next(&conn, &b, &[], "todo", None).unwrap(), Some(1));
         assert_eq!(claim_next(&conn, &b, &[], "todo", None).unwrap(), None);
         // Le bail d'un autre agent est respecté, le sien se renouvelle.
-        assert!(matches!(claim(&conn, &b, 2, None), Err(WfError::Conflict(_))));
-        assert!(!claim(&conn, &a, 2, Some(30)).unwrap());
+        assert!(matches!(claim(&conn, &b, 2, None, None), Err(WfError::Conflict(_))));
+        assert!(!claim(&conn, &a, 2, Some(30), None).unwrap());
         // Bail expiré : la tâche abandonnée redevient disponible.
         conn.execute("UPDATE tasks SET claimed_until = datetime('now', '-1 minute') WHERE id = 2", [])
             .unwrap();
@@ -425,7 +428,7 @@ mod tests {
         let conn = setup();
         let a = agent("claude");
         assert!(matches!(move_task(&conn, &a, 3, "todo", None), Err(WfError::Forbidden(_))));
-        claim(&conn, &a, 2, None).unwrap();
+        claim(&conn, &a, 2, None, None).unwrap();
         move_task(&conn, &a, 2, "review", Some("Done, tests pass.")).unwrap();
         assert_eq!(status(&conn, 2), "review");
         assert!(matches!(move_task(&conn, &a, 2, "deploy", None), Err(WfError::Forbidden(_))));
@@ -435,6 +438,11 @@ mod tests {
         assert_eq!(claimed, "");
         let kinds: Vec<String> = fetch_log(&conn, 2).unwrap().into_iter().map(|l| l.kind).collect();
         assert_eq!(kinds, ["claim", "move", "move", "report", "move"]);
+        // Renouvellement tardif du bail de l'agent (état attendu « progress ») :
+        // refusé, la tâche approuvée reste libre pour le déploiement.
+        assert!(matches!(claim(&conn, &a, 2, Some(30), Some("progress")), Err(WfError::Conflict(_))));
+        let claimed: String = conn.query_row("SELECT claimed_by FROM tasks WHERE id = 2", [], |r| r.get(0)).unwrap();
+        assert_eq!(claimed, "");
     }
 
     #[test]
@@ -447,7 +455,7 @@ mod tests {
         .unwrap();
         let a = agent("claude");
         // La tâche 2 (la plus prioritaire) est sautée, et refusée si demandée explicitement.
-        assert!(matches!(claim(&conn, &a, 2, None), Err(WfError::Forbidden(_))));
+        assert!(matches!(claim(&conn, &a, 2, None, None), Err(WfError::Forbidden(_))));
         assert!(matches!(move_task(&conn, &a, 2, "progress", None), Err(WfError::Forbidden(_))));
         assert_eq!(claim_next(&conn, &a, &[], "todo", None).unwrap(), Some(1));
         assert_eq!(claim_next(&conn, &a, &[], "todo", None).unwrap(), None);
@@ -475,7 +483,7 @@ mod tests {
         let conn = setup();
         conn.execute("INSERT INTO task_deps (task_id, depends_on) VALUES (2, 1)", []).unwrap();
         let a = agent("claude");
-        assert!(matches!(claim(&conn, &a, 2, None), Err(WfError::Conflict(_))));
+        assert!(matches!(claim(&conn, &a, 2, None, None), Err(WfError::Conflict(_))));
         assert_eq!(claim_next(&conn, &a, &[], "todo", None).unwrap(), Some(1));
         conn.execute("UPDATE tasks SET status = 'done' WHERE id = 1", []).unwrap();
         assert_eq!(claim_next(&conn, &a, &[], "todo", None).unwrap(), Some(2));

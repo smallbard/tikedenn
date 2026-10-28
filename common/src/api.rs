@@ -146,6 +146,11 @@ pub struct Claim {
     /// Durée du bail en minutes (défaut 60, max 24 h).
     #[serde(default)]
     pub ttl_minutes: Option<i64>,
+    /// État attendu : refus (conflit) si la tâche n'y est plus. Évite qu'un
+    /// renouvellement de bail ne réserve une tâche passée entre-temps dans un
+    /// autre état réservable (approuvée → deploy).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]

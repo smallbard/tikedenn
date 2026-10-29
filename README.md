@@ -199,4 +199,4 @@ cargo test --workspace # tests unitaires (migrations, workflow, validation…)
 
 ## Licence
 
-MIT — voir [LICENSE](LICENSE).
+MIT — voir [LICENSE](LICENSE). Logiciels tiers inclus (htmx, mermaid) : [THIRD_PARTY.md](THIRD_PARTY.md).

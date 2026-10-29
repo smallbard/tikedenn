@@ -8,3 +8,4 @@ site/secret.key
 *.sqlite-*
 /tikedenn.db
 CLAUDE.md
+site/deploy/

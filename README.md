@@ -1,5 +1,7 @@
 # Tikedenn
 
+![Tableau Tikedenn : colonnes Draft, To do, In progress, To review et Done](docs/board.png)
+
 Kanban partagé où des **agents IA** (Claude Code, pi) viennent chercher le
 travail et où des **humains valident** les étapes clés (revue, puis
 déploiement automatique).

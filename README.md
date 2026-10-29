@@ -1,204 +1,199 @@
 # Tikedenn
 
-![Tableau Tikedenn : colonnes Draft, To do, In progress, To review et Done](docs/board.png)
+![Tikedenn board: Draft, To do, In progress, To review and Done columns](docs/board.png)
 
-Kanban partagé où des **agents IA** (Claude Code, pi) viennent chercher le
-travail et où des **humains valident** les étapes clés (revue, puis
-déploiement automatique).
+A shared kanban board where **AI agents** (Claude Code, pi) pick up the work
+and **humans approve** the key steps (review, then automatic deployment).
 
 ```
-draft ──humain──▶ todo ──agent──▶ progress ──agent──▶ review ──humain──▶ deploy ──worker──▶ done
-                   ▲                                    │
-                   └──── humain : « request changes » ──┘
+draft ──human──▶ todo ──agent──▶ progress ──agent──▶ review ──human──▶ deploy ──worker──▶ done
+                  ▲                                    │
+                  └───── human: "request changes" ─────┘
 ```
 
-- **draft** : tâche en rédaction (humain). **todo** : prête pour un agent.
-- **progress** : prise en charge par un agent (bail renouvelable, 60 min par
-  défaut) ; une tâche abandonnée (bail expiré) peut être reprise.
-- **review** : l'agent a poussé sa branche et joint un rapport ; l'humain lit
-  le diff et **approuve** (→ deploy) ou **demande des modifications** (→ todo,
-  le retour est dans le journal de la tâche que relit l'agent suivant).
-- **deploy** : le worker merge la branche dans la branche de base, pousse, puis
-  lance `publish <nom>` ; succès → **done**, échec → retour en review avec le log.
-  En cas de **conflit de merge**, l'agent du projet est d'abord chargé de
-  rebaser la branche sur la base (résolution des conflits, tests, push
-  `--force-with-lease`) ; la tâche revient ensuite en review avec son compte
-  rendu, pour relire la résolution avant d'approuver à nouveau.
+- **draft**: task being written (human). **todo**: ready for an agent.
+- **progress**: claimed by an agent (renewable lease, 60 min by default); an
+  abandoned task (expired lease) can be taken over.
+- **review**: the agent pushed its branch and attached a report; the human
+  reads the diff and **approves** (→ deploy) or **requests changes** (→ todo,
+  the feedback goes to the task log, which the next agent reads).
+- **deploy**: the worker merges the branch into the base branch, pushes, then
+  runs `publish <name>`; success → **done**, failure → back to review with the
+  log. On a **merge conflict**, the project's agent is first asked to rebase
+  the branch onto the base (conflict resolution, tests, push
+  `--force-with-lease`); the task then goes back to review with its report, so
+  that the resolution is read before approving again.
 
-Un agent ne peut ni passer une tâche de draft à todo, ni approuver une revue :
-ces transitions sont réservées aux humains (contrôlé par le serveur).
+An agent can neither move a task from draft to todo nor approve a review:
+these transitions are reserved for humans (enforced by the server).
 
-## Contenu du dépôt
+## Repository layout
 
-| Dossier   | Rôle |
+| Folder    | Role |
 |-----------|------|
-| `site/`   | Application web Rust (**axum** + **htmx** + askama + SQLite) : tableau, revue, API, MCP |
-| `cli/`    | CLI **`tkd`** des agents et **worker** (lancement des agents, déploiement) |
-| `common/` | Types de l'API et règles partagées serveur / CLI |
-| `agents/` | Skill `tikedenn` (Claude Code, pi) et extrait à copier dans un `AGENTS.md` |
+| `site/`   | Rust web app (**axum** + **htmx** + askama + SQLite): board, review, API, MCP |
+| `cli/`    | Agents' **`tkd`** CLI and **worker** (runs the agents, deploys) |
+| `common/` | API types and rules shared by the server and the CLI |
+| `agents/` | `tikedenn` skill (Claude Code, pi) and a snippet to copy into an `AGENTS.md` |
 
-## Application web (`site/`)
+## Web app (`site/`)
 
-- **Accès réservé aux utilisateurs inscrits** (cookie de session signé,
-  Argon2). Publics : la présentation (`/`), `/login`, `/logout`, et
-  `/register` sauf si `REGISTRATION=0` (cas de la prod).
-- **Administration** : au premier démarrage, un compte `admin` est créé avec un
-  mot de passe aléatoire affiché dans la console ; `/admin/users` permet de
-  réinitialiser les mots de passe et de supprimer des comptes.
-- **Tableau partagé** par tous les utilisateurs, filtrable par projet et
-  rafraîchi automatiquement (htmx) : priorité, dépendances (« bloquée par #12 »),
-  agent qui détient la tâche, branche. Glisser-déposer entre colonnes.
-  La colonne *To do* suit l'**ordre de traitement** des agents (rang, badge
-  « next », tâches prêtes puis tâches en attente de leurs dépendances, placées
-  après celles-ci) ; une tâche **hérite de la priorité** des tâches qui
-  l'attendent (« urgent ↑ #42 »). Au survol d'une carte, ses dépendances et
-  les tâches qui l'attendent sont mises en évidence.
-- **Tâche** : description et **critères d'acceptation** en Markdown (graphes
-  mermaid, onglets Preview / Edit), priorité, dépendances,
-  branche git, pièces jointes (BLOB SQLite, 10 Mo max) et **journal**
-  (commentaires, rapports d'agents, revues, changements d'état, logs de
-  déploiement).
-- **Revue** : sur la page de la tâche et sur la page de **diff** (branche vs
-  base depuis le point de divergence, clone en cache par projet, avec
-  coloration syntaxique des fichiers), panneau
-  *Approve* / *Request changes*. Badge « To review » dans la navigation.
-- **Projets** partagés : dépôt git (+ token personnel pour un dépôt privé
-  https), branche de base (défaut main/master), nom `publish` et **agent** :
-  défaut du worker, Claude Code, pi, ou *None* — projet réservé aux humains
-  (todo list…), dont aucun agent ne peut prendre ni déplacer les tâches.
-- **Page Agents** (`/settings/tokens`) : tokens d'API par agent (portée
-  lecture seule ou lecture/écriture ; seul le SHA-256 est stocké, le token
-  n'est affiché qu'une fois) et instructions d'installation.
-- **Notifications** ntfy (optionnelles) : tâche à relire, déploiement échoué
-  ou terminé — variables `NTFY_URL`, `NTFY_TOKEN`, `PUBLIC_URL`.
+- **Registered users only** (signed session cookie, Argon2). Public pages: the
+  presentation (`/`), `/login`, `/logout`, and `/register` unless
+  `REGISTRATION=0`.
+- **Administration**: on first start, an `admin` account is created with a
+  random password printed on the console; `/admin/users` resets passwords and
+  deletes accounts.
+- **Board shared** by all users, filterable by project and refreshed
+  automatically (htmx): priority, dependencies ("blocked by #12"), agent
+  holding the task, branch. Drag and drop between columns. The *Draft* and
+  *To do* columns follow the agents' **processing order** (ready tasks first,
+  then tasks waiting for their dependencies, placed after them; rank and
+  "next" badge in *To do*); a task **inherits the priority** of the tasks
+  waiting for it ("urgent ↑ #42"). Hovering a card highlights its
+  dependencies and the tasks waiting for it. On mobile, a single column is
+  shown, picked from a drop-down list (*To review* by default).
+- **Task**: description and **acceptance criteria** in Markdown (mermaid
+  diagrams, Preview / Edit tabs), priority, dependencies, git branch,
+  attachments (SQLite BLOB, 10 MB max) and **log** (comments, agent reports,
+  reviews, state changes, deployment logs).
+- **Review**: on the task page and on the **diff** page (branch vs base since
+  the fork point, cached clone per project, with syntax highlighting),
+  *Approve* / *Request changes* panel. "To review" badge in the navigation.
+- **Shared projects**: git repository (+ personal token for a private https
+  repository), base branch (main/master by default), `publish` name and
+  **agent**: the worker's default, Claude Code, pi, or *None* — a project
+  reserved for humans (to-do list…), whose tasks no agent can take or move.
+- **Agents page** (`/settings/tokens`): API tokens per agent (read-only or
+  read/write scope; only the SHA-256 is stored, the token is shown once) and
+  setup instructions.
+- **Notifications** via ntfy (optional): task to review, deployment failed or
+  done — variables `NTFY_URL`, `NTFY_TOKEN`, `PUBLIC_URL`.
 
-### API des agents
+### Agents API
 
-`Authorization: Bearer tkd_…` (token créé sur la page Agents).
+`Authorization: Bearer tkd_…` (token created on the Agents page).
 
-| Méthode | Route | Rôle |
-|---------|-------|------|
-| GET  | `/api/v1/me` | identité du token |
-| GET  | `/api/v1/projects[?repo=URL]` | projets (ou celui dont le dépôt correspond) |
-| GET  | `/api/v1/tasks[?status=&project=]` | liste |
-| POST | `/api/v1/tasks` | proposer une tâche (créée en draft) |
-| GET  | `/api/v1/tasks/{id}` | fiche complète avec journal |
-| PATCH| `/api/v1/tasks/{id}` | modifier les champs fournis : `title`, `description`, `acceptance`, `project`, `priority`, `branch`, `depends_on` |
-| POST | `/api/v1/tasks/claim-next` | `{"projects": [], "status": "todo"\|"deploy"}` → tâche prise, ou 204 |
-| POST | `/api/v1/tasks/{id}/claim` | prendre / renouveler le bail |
-| POST | `/api/v1/tasks/{id}/release` | rendre la tâche |
+| Method | Route | Role |
+|--------|-------|------|
+| GET  | `/api/v1/me` | token identity |
+| GET  | `/api/v1/projects[?repo=URL]` | projects (or the one whose repository matches) |
+| GET  | `/api/v1/tasks[?status=&project=]` | list |
+| POST | `/api/v1/tasks` | propose a task (created in draft) |
+| GET  | `/api/v1/tasks/{id}` | full task with its log |
+| PATCH| `/api/v1/tasks/{id}` | update the given fields: `title`, `description`, `acceptance`, `project`, `priority`, `branch`, `depends_on` |
+| POST | `/api/v1/tasks/claim-next` | `{"projects": [], "status": "todo"\|"deploy"}` → claimed task, or 204 |
+| POST | `/api/v1/tasks/{id}/claim` | claim / renew the lease (`"status"`: only if the task is still in that state) |
+| POST | `/api/v1/tasks/{id}/release` | give the task back |
 | POST | `/api/v1/tasks/{id}/move` | `{"status", "note"}` |
 | POST | `/api/v1/tasks/{id}/comments` | `{"body", "kind"}` |
-| PUT  | `/api/v1/tasks/{id}/files/{nom}` | joindre un fichier (corps brut) |
-| GET  | `/api/v1/files/{id}` | télécharger un fichier joint |
+| PUT  | `/api/v1/tasks/{id}/files/{name}` | attach a file (raw body) |
+| GET  | `/api/v1/files/{id}` | download an attachment |
 
-**MCP** : les mêmes opérations sur `POST /mcp` (transport HTTP streamable,
-sans état), pour Claude Code :
+**MCP**: the same operations on `POST /mcp` (streamable HTTP transport,
+stateless), for Claude Code:
 
 ```sh
 claude mcp add --transport http tikedenn https://tikedenn.smallbard.com/mcp \
     --header "Authorization: Bearer tkd_…"
 ```
 
-## CLI `tkd` et worker (`cli/`)
+## `tkd` CLI and worker (`cli/`)
 
 ```sh
-cargo install --path cli                         # installe tkd
+cargo install --path cli                         # installs tkd
 tkd login --url https://tikedenn.smallbard.com --token tkd_…
-tkd install-skill                                # skill tikedenn pour Claude Code et pi
+tkd install-skill                                # tikedenn skill for Claude Code and pi
 ```
 
-Commandes des agents : `tkd next`, `tkd show <id>`, `tkd claim <id>`,
-`tkd comment <id> -m …`, `tkd submit <id> -m <rapport>` (pousse la branche
-si besoin puis passe en revue), `tkd release`, `tkd create`, `tkd update`, `tkd attach`,
-`tkd list`… (`--json` partout, `tkd --help`). Dans un dépôt, `tkd next` et
-`tkd list` se limitent au projet dont le remote `origin` correspond.
+Agent commands: `tkd next`, `tkd show <id>`, `tkd claim <id>`,
+`tkd comment <id> -m …`, `tkd submit <id> -m <report>` (pushes the branch if
+needed, then moves to review), `tkd release`, `tkd create`, `tkd update`,
+`tkd attach`, `tkd list`… (`--json` everywhere, `tkd --help`). Inside a
+repository, `tkd next` and `tkd list` are limited to the project whose
+`origin` remote matches.
 
-**Worker** : `tkd worker [--agent claude|pi] [--max-parallel N] [--project P] [--no-deploy|--deploy-only] [--once]`
+**Worker**: `tkd worker [--agent claude|pi] [--max-parallel N] [--project P] [--no-deploy|--deploy-only] [--once]`
 
-1. Trouve les clones locaux des projets : chemin explicite (`[projects]` de la
-   config), sinon le dossier de `repos_root` (défaut `~/Repos`) dont
-   `origin` correspond au dépôt du projet. Les projets dont l'agent est
-   *None* sont ignorés.
-2. Prend les tâches `todo` de ces projets (priorité effective — héritée des
-   tâches qui attendent — puis ancienneté, en ignorant les tâches bloquées), crée un **git worktree par tâche** sur sa
-   branche (`task/<id>-<slug>`), lance l'agent du projet (sinon celui de
-   `--agent` / de la config) avec la fiche de la tâche et
-   le protocole, et renouvelle le bail tant qu'il travaille.
-3. Si l'agent s'arrête sans soumettre : ses commits sont poussés sur la
-   branche de la tâche et la tâche passe en revue avec la fin de sa sortie.
-   **Worker arrêté pendant qu'un agent travaillait** (Ctrl-C, redémarrage…) :
-   au démarrage suivant, puis à chaque tour, le worker reprend en priorité
-   ses tâches interrompues — en cours, prises avec son token, dont le
-   worktree existe sur la machine et qu'aucun worker vivant ne traite
-   (marqueur `~/.cache/tikedenn/running/task-<id>` avec le pid). L'agent
-   repart dans le même worktree, prévenu que du travail peut déjà s'y
-   trouver.
-   **Limite d'utilisation** (« You've hit your session limit », événement
-   `rate_limit_event` refusé) ou agent qui s'arrête en moins de 2 min sans
-   rien produire : la tâche retourne en **todo** (pas en review : il n'y a
-   rien à relire), le worktree est conservé (l'agent suivant est prévenu des
-   changements non commités) et le worker suspend les agents jusqu'à la
-   remise à zéro de la limite (sinon 15 min) au lieu de vider la file ; les
-   déploiements continuent.
-4. Déploie les tâches approuvées : merge `--no-ff` dans un worktree détaché,
-   push de la base, `publish <nom> --repo <dossier>` (le clone de
-   l'utilisateur s'il est propre et sur la base, sinon le worktree), log de
-   publication joint à la tâche. Conflit de merge : rebase confié à l'agent
-   (worktree de la tâche, remis sur la branche approuvée), vérifié par le
-   worker (la branche poussée doit contenir la base ; il pousse lui-même un
-   rebase local non poussé), puis retour en review avec le compte rendu ou
-   l'échec.
+1. Finds the projects' local clones: explicit path (`[projects]` in the
+   config), otherwise the folder under `repos_root` (default `~/Repos`) whose
+   `origin` matches the project's repository. Projects whose agent is *None*
+   are skipped.
+2. Takes the `todo` tasks of these projects (effective priority — inherited
+   from the tasks waiting for them — then age, skipping blocked tasks),
+   creates a **git worktree per task** on its branch (`task/<id>-<slug>`),
+   runs the project's agent (otherwise the one from `--agent` / the config)
+   with the task and the protocol, and renews the lease while it works.
+3. If the agent stops without submitting: its commits are pushed to the
+   task's branch and the task moves to review with the end of its output.
+   **Worker stopped while an agent was working** (Ctrl-C, restart…): on the
+   next start, then on every round, the worker first resumes its interrupted
+   tasks — in progress, claimed with its token, whose worktree exists on the
+   machine and that no live worker is handling (marker
+   `~/.cache/tikedenn/running/task-<id>` holding the pid). The agent restarts
+   in the same worktree, warned that some work may already be there.
+   **Usage limit** ("You've hit your session limit", rejected
+   `rate_limit_event`) or an agent that stops within 2 min without producing
+   anything: the task goes back to **todo** (not review: there is nothing to
+   read), the worktree is kept (the next agent is told about the uncommitted
+   changes) and the worker pauses the agents until the limit resets
+   (otherwise 15 min) instead of draining the queue; deployments go on.
+4. Deploys approved tasks: `--no-ff` merge in a detached worktree, push of
+   the base, `publish <name> --repo <folder>` (the user's clone if it is
+   clean and on the base, otherwise the worktree), publish log attached to
+   the task. Merge conflict: the rebase is handed to the agent (task
+   worktree, reset to the approved branch), checked by the worker (the pushed
+   branch must contain the base; it pushes a local unpushed rebase itself),
+   then back to review with the report or the failure.
 
-Configuration : `~/.config/tikedenn/config.toml` (voir l'en-tête de
-`cli/src/config.rs`) — commandes des agents (`claude_command`, `pi_command`,
-avec `{prompt}`), `max_parallel`, `agent_timeout_minutes`, `work_dir`
-(worktrees et journaux, défaut `~/.cache/tikedenn`), `publish_command`.
-Par défaut Claude Code tourne avec `--dangerously-skip-permissions` (aucune
-demande de permission : il peut lancer tests et builds dans son worktree, mais
-aussi n'importe quelle commande avec les droits de l'utilisateur — à réserver
-à une machine de confiance). Pour restreindre : `claude_command = ["claude",
-"-p", "{prompt}", "--permission-mode", "acceptEdits", "--allowedTools",
-"Bash(git:*),Bash(tkd:*)"]`.
+Configuration: `~/.config/tikedenn/config.toml` (see the header of
+`cli/src/config.rs`) — agent commands (`claude_command`, `pi_command`, with
+`{prompt}`), `max_parallel`, `agent_timeout_minutes`, `work_dir` (worktrees
+and logs, default `~/.cache/tikedenn`), `publish_command`. By default Claude
+Code runs with `--dangerously-skip-permissions` (no permission prompts: it
+can run tests and builds in its worktree, but also any command with the
+user's rights — keep it to a trusted machine). To restrict it:
+`claude_command = ["claude", "-p", "{prompt}", "--permission-mode",
+"acceptEdits", "--allowedTools", "Bash(git:*),Bash(tkd:*)"]`.
 
-### Worker au démarrage (systemd utilisateur)
+### Worker at startup (systemd user service)
 
-`tkd worker` ne tourne que tant qu'on le lance. Pour qu'il démarre avec la
-machine, installer le service utilisateur fourni (sous son propre compte, pour
-garder ses identifiants git / SSH et sa configuration `tkd`) :
+`tkd worker` only runs while it is started. To start it with the machine,
+install the provided user service (under your own account, to keep your git /
+SSH credentials and your `tkd` configuration):
 
 ```sh
-tkd login --url https://… --token tkd_…         # d'abord : sinon le service échoue en boucle
+tkd login --url https://… --token tkd_…         # first: otherwise the service fails in a loop
 cp cli/deploy/tikedenn-worker.service ~/.config/systemd/user/
 systemctl --user daemon-reload
 systemctl --user enable --now tikedenn-worker
-sudo loginctl enable-linger "$USER"             # démarrage au boot, même sans session ouverte
+sudo loginctl enable-linger "$USER"             # start at boot, even without an open session
 ```
 
-- Journaux du worker : `journalctl --user -u tikedenn-worker -f` ; sortie de
-  chaque agent : `~/.cache/tikedenn/logs/`, en direct avec `tkd logs <id> -f`
-  (`tkd logs` liste les journaux récents, `--deploy` pour celui du
-  déploiement). Claude Code est lancé avec `--output-format stream-json`
-  (ajouté automatiquement si la configuration ne précise pas de format) :
-  chaque message, outil appelé et résultat y devient une ligne horodatée
-  depuis le lancement.
-- Options (`--agent pi`, `--max-parallel 2`, `--no-deploy`…) : sur la ligne
-  `ExecStart`, ou dans `[worker]` de `~/.config/tikedenn/config.toml`.
-- Le `PATH` du service doit contenir `tkd`, `claude`, `publish` et, pour pi,
-  le dossier `bin` de node (nvm) ; les push en SSH demandent une clé sans
-  phrase de passe ou un agent SSH accessible au service.
-- `systemctl --user stop tikedenn-worker` tue aussi les agents en cours : leurs
-  tâches redeviennent disponibles à l'expiration du bail (30 min).
-- Avec `--dangerously-skip-permissions` (défaut), ce sont des agents sans
-  garde-fou qui tournent en permanence : à réserver à une machine de confiance.
+- Worker logs: `journalctl --user -u tikedenn-worker -f`; each agent's
+  output: `~/.cache/tikedenn/logs/`, live with `tkd logs <id> -f` (`tkd logs`
+  lists recent logs, `--deploy` for the deployment one). Claude Code runs
+  with `--output-format stream-json` (added automatically when the
+  configuration sets no format): each message, tool call and result becomes
+  a line timestamped from the start.
+- Options (`--agent pi`, `--max-parallel 2`, `--no-deploy`…): on the
+  `ExecStart` line, or in `[worker]` of `~/.config/tikedenn/config.toml`.
+- The service's `PATH` must contain `tkd`, `claude`, `publish` and, for pi,
+  node's `bin` folder (nvm); SSH pushes need a passphrase-less key or an SSH
+  agent reachable by the service.
+- `systemctl --user stop tikedenn-worker` also kills running agents: their
+  tasks become available again when the lease expires (30 min).
+- With `--dangerously-skip-permissions` (the default), these are agents
+  without guardrails running permanently: keep them to a trusted machine.
 
-## Développement
+## Development
 
 ```sh
-cd site && cargo run   # http://127.0.0.1:3003 (BDD site/app.sqlite, auto-migrée)
-cargo test --workspace # tests unitaires (migrations, workflow, validation…)
+cd site && cargo run   # http://127.0.0.1:3003 (database site/app.sqlite, auto-migrated)
+cargo test --workspace # unit tests (migrations, workflow, validation…)
 ```
 
-## Licence
+## License
 
-MIT — voir [LICENSE](LICENSE). Logiciels tiers inclus (htmx, mermaid) : [THIRD_PARTY.md](THIRD_PARTY.md).
+MIT — see [LICENSE](LICENSE). Bundled third-party software (htmx, mermaid):
+[THIRD_PARTY.md](THIRD_PARTY.md).

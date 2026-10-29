@@ -197,16 +197,6 @@ cd site && cargo run   # http://127.0.0.1:3003 (BDD site/app.sqlite, auto-migré
 cargo test --workspace # tests unitaires (migrations, workflow, validation…)
 ```
 
-## Publication
+## Licence
 
-Les coordonnées SSH du VPS ne sont pas dans ce dépôt : elles viennent du
-`vps.conf` du dépôt privé `Publish` (attendu à côté de celui-ci), ou des
-variables d'environnement `VPS_HOST` / `VPS_PORT`.
-
-```sh
-CERTBOT_EMAIL=... ./site/deploy/setup-vps.sh   # une seule fois (systemd + nginx + certbot)
-publish tikedenn                               # build musl + déploiement + vérification de santé
-```
-
-Options de `publish` : `--skip-build`, `--skip-upload`, `--dry-run`, `--download-db`.
-La BDD de prod n'est jamais écrasée par le déploiement.
+MIT — voir [LICENSE](LICENSE).

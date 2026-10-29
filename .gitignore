@@ -7,3 +7,4 @@ site/secret.key
 *.sqlite
 *.sqlite-*
 /tikedenn.db
+CLAUDE.md

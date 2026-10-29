@@ -2,6 +2,7 @@
 name = "tkd"
 version = "0.1.0"
 edition = "2021"
+license = "MIT"
 description = "CLI Tikedenn pour les agents (Claude Code, pi) : tâches, prise en charge, worker, déploiement"
 
 [dependencies]

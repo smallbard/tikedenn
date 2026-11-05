@@ -57,7 +57,7 @@ fn merge_and_push(ctx: &Ctx, task: &TaskDetail, repo: &Path, base: &str, dry_run
         .join(format!("{}-{id}", project.id));
     // Deux essais : si la base a avancé entre le fetch et le push, on refait le merge.
     for attempt in 0..2 {
-        git(repo, &["fetch", "origin", "--prune"])?;
+        git::fetch(repo)?;
         if wt.exists() {
             let _ = git(repo, &["worktree", "remove", "--force", &wt.to_string_lossy()]);
             let _ = std::fs::remove_dir_all(&wt);
@@ -230,13 +230,13 @@ fn rebase_with_agent(ctx: &Ctx, agent: &str, task: &TaskDetail, project: &Projec
         let _ = git(&wt, &["merge", "--abort"]);
         bail!("{agent} {what} with the rebase unfinished.\n\nLast output:\n```\n{tail}\n```");
     }
-    git(&wt, &["fetch", "origin", "--prune"])?;
+    git::fetch(&wt)?;
     let has_base = |rev: &str| git_ok(&wt, &["merge-base", "--is-ancestor", &format!("origin/{base}"), rev]);
     let remote = format!("origin/{branch}");
     // Rebasée localement mais pas poussée : le worker pousse.
     if !has_base(&remote) && has_base("HEAD") && git::is_clean(&wt) {
         git(&wt, &["push", "--force-with-lease", "origin", &format!("HEAD:refs/heads/{branch}")])?;
-        git(&wt, &["fetch", "origin", "--prune"])?;
+        git::fetch(&wt)?;
     }
     if !has_base(&remote) {
         bail!("{agent} {what} without rebasing `{branch}` on `{base}`.\n\nLast output:\n```\n{tail}\n```");

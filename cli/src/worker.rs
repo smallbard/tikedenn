@@ -278,7 +278,7 @@ pub(crate) fn run_agent(
 fn run_task(ctx: &Ctx, agent: &str, task: TaskDetail, project: Project, repo: PathBuf, resumed: bool) -> Result<()> {
     let id = task.summary.id;
     let _marker = RunningMarker::create(&ctx.cfg, id);
-    git(&repo, &["fetch", "origin", "--prune"])?;
+    git::fetch(&repo)?;
     let base = base_branch(&repo, &project)?;
     let branch = if task.summary.branch.is_empty() {
         let b = task_branch_name(id, &task.summary.title);

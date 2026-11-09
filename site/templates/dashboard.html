@@ -10,6 +10,7 @@
       <option value="{{ p.id }}" {% if p.id == selected_project %}selected{% endif %}>{{ p.name }}</option>
       {% endfor %}
     </select>
+    <input type="search" name="q" id="board-search" placeholder="Search tasks…" aria-label="Search tasks" autocomplete="off">
   </form>
 </div>
 
@@ -42,6 +43,63 @@
   document.addEventListener('change', function (e) {
     if (e.target.classList && e.target.classList.contains('col-picker')) wrap.dataset.show = e.target.value;
   });
+})();
+// Recherche : filtre les cartes affichées au fil de la saisie (tous les mots,
+// sans tenir compte de la casse ni des accents ; numéro, titre, début de la
+// description, tags). Côté navigateur seulement, réappliquée après chaque
+// rafraîchissement du tableau ; gardée dans l'URL (?q=).
+(function () {
+  var input = document.getElementById('board-search');
+  var wrap = document.getElementById('board-wrap');
+  function norm(s) { return s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase(); }
+  input.value = new URLSearchParams(location.search).get('q') || '';
+  function apply() {
+    var words = norm(input.value).split(/\s+/).filter(Boolean);
+    wrap.querySelectorAll('.col').forEach(function (col) {
+      var shown = 0;
+      col.querySelectorAll('.card.task').forEach(function (card) {
+        var text = '';
+        card.querySelectorAll('.card-head, .card-tags, .card-desc').forEach(function (el) { text += ' ' + el.textContent; });
+        text = norm(text);
+        var ok = words.every(function (w) { return text.indexOf(w) >= 0; });
+        card.hidden = !ok;
+        if (ok) shown++;
+      });
+      // Séparateur « en attente » : masqué s'il ne reste aucune carte après lui.
+      var sep = col.querySelector('.col-sep');
+      if (sep) {
+        var after = false;
+        for (var n = sep.nextElementSibling; n; n = n.nextElementSibling)
+          if (n.classList.contains('task') && !n.hidden) { after = true; break; }
+        sep.hidden = !after;
+      }
+      var total = col.querySelectorAll('.card.task').length;
+      var label = words.length && total ? shown + '/' + total : String(total);
+      var count = col.querySelector('header .count');
+      if (count) count.textContent = label;
+      var opt = wrap.querySelector('.col-picker option[value="' + col.dataset.status + '"]');
+      if (opt) opt.textContent = opt.textContent.replace(/\([^)]*\)$/, '(' + label + ')');
+      var none = col.querySelector('.no-match');
+      if (words.length && total && !shown) {
+        if (!none) {
+          none = document.createElement('p');
+          none.className = 'empty no-match';
+          none.textContent = 'No matching task.';
+          col.querySelector('.col-body').appendChild(none);
+        }
+      } else if (none) none.remove();
+    });
+  }
+  input.addEventListener('input', function () {
+    var u = new URL(location.href);
+    if (input.value) u.searchParams.set('q', input.value); else u.searchParams.delete('q');
+    history.replaceState(null, '', u);
+    apply();
+  });
+  // Entrée ne recharge pas la page.
+  input.addEventListener('keydown', function (e) { if (e.key === 'Enter') e.preventDefault(); });
+  document.body.addEventListener('htmx:afterSwap', apply);
+  apply();
 })();
 (function () {
   function colOf(e) { return e.target.closest && e.target.closest('#board .col'); }

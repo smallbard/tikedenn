@@ -9,6 +9,7 @@ use crate::config::{tail_file, Config};
 use crate::deploy;
 use crate::git::{self, base_branch, find_local_repo, git, remote_branch_exists};
 use crate::render::task_markdown;
+use crate::taskenv;
 use anyhow::{bail, Context, Result};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -128,7 +129,7 @@ pub(crate) fn agent_command(cfg: &Config, agent: &str) -> Result<Vec<String>> {
 }
 
 /// Consigne donnée à l'agent : la fiche de la tâche et le protocole.
-pub fn agent_prompt(task: &TaskDetail, branch: &str, base: &str) -> String {
+pub fn agent_prompt(task: &TaskDetail, branch: &str, base: &str, wt: &Path) -> String {
     let id = task.summary.id;
     format!(
         r#"You are an autonomous coding agent working on task #{id} of the Tikedenn board (a kanban shared with humans).
@@ -153,7 +154,15 @@ Protocol:
 4. If the specification is ambiguous or you are blocked, do not guess: push what you have (if useful) and run
    `tkd submit {id} -m "BLOCKED: <your question>"`.
 You may add progress notes with `tkd comment {id} -m "…"` and read the task again with `tkd show {id}`.
+
+Machine hygiene (other agents share this machine and its disk):
+- Put every temporary file in `$TIKEDENN_TMP` ({tmp}, also exported as `TMPDIR`), never in `/tmp`:
+  scratch files, test databases, logs, screenshots, and any build directory you move out of the worktree
+  (e.g. `CARGO_TARGET_DIR`). It is ignored by git and emptied when your session ends.
+- Before `tkd submit` or `tkd release`, stop every server, watcher or container you started (including
+  `docker` containers). The worker kills the processes of this session that are still running when you exit.
 "#,
+        tmp = taskenv::tmp_dir(wt).display(),
         card = task_markdown(task),
     )
 }
@@ -214,10 +223,17 @@ pub(crate) fn run_agent(
     )?;
     println!("[#{id}] {agent} started in {} (log {})", wt.display(), log_path.display());
 
+    // Fichiers temporaires dans le worktree plutôt que dans /tmp ; la
+    // variable TIKEDENN_TMP marque aussi les processus de la session.
+    let tmp = taskenv::prepare_tmp(wt).with_context(|| format!("Could not create {}", taskenv::tmp_dir(wt).display()))?;
     let mut child = Command::new(&cmd[0])
         .args(&cmd[1..])
         .current_dir(wt)
         .env("TIKEDENN_TASK", id.to_string())
+        .env("TIKEDENN_TMP", &tmp)
+        .env("TMPDIR", &tmp)
+        .env("TMP", &tmp)
+        .env("TEMP", &tmp)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(log.try_clone()?)
@@ -268,6 +284,20 @@ pub(crate) fn run_agent(
         thread::sleep(Duration::from_secs(5));
     };
 
+    // Processus laissés par l'agent (serveurs de test…) : arrêtés, puis
+    // dossier temporaire vidé.
+    let leftovers = taskenv::stop_leftovers(wt);
+    if !leftovers.is_empty() {
+        let list = taskenv::describe(&leftovers);
+        println!("[#{id}] stopped {} process(es) left running by the agent:\n{list}", leftovers.len());
+        let _ = ctx.client.comment(
+            id,
+            &format!("The worker stopped {} process(es) the agent left running:\n```\n{list}\n```", leftovers.len()),
+            "comment",
+        );
+    }
+    taskenv::clear_tmp(wt);
+
     // Fin du journal (un processus lancé par l'agent peut garder la sortie ouverte).
     let limit = pumped.recv_timeout(Duration::from_secs(5)).ok().flatten();
     Ok((outcome, log_path, limit))
@@ -291,7 +321,7 @@ fn run_task(ctx: &Ctx, agent: &str, task: TaskDetail, project: Project, repo: Pa
     prepare_worktree(&repo, &wt, &branch, &base)?;
     let task = ctx.client.task(id)?;
 
-    let mut prompt = agent_prompt(&task, &branch, &base);
+    let mut prompt = agent_prompt(&task, &branch, &base, &wt);
     // Changements non commités d'une exécution précédente (agent arrêté par
     // une limite…) : l'agent repart de là.
     let resumed = resumed || !git::is_clean(&wt);
@@ -462,6 +492,40 @@ fn interrupted_tasks(ctx: &Ctx, local: &[(Project, PathBuf)], running: &[i64]) -
     out
 }
 
+/// Intervalle du ménage des worktrees.
+const GC_EVERY: Duration = Duration::from_secs(3600);
+
+/// Supprime les worktrees des tâches terminées (done) ou supprimées : un
+/// humain a pu les déplacer sans passer par le déploiement du worker. Ceux
+/// des autres tâches restent (reprise après une revue, une interruption).
+fn gc_worktrees(ctx: &Ctx, local: &[(Project, PathBuf)], running: &[i64]) {
+    for (project, repo) in local {
+        let dir = ctx.cfg.work_dir().join("worktrees").join(safe_dir_name(&project.name));
+        let Ok(entries) = std::fs::read_dir(&dir) else { continue };
+        for wt in entries.flatten().map(|e| e.path()) {
+            let Some(id) = taskenv::worktree_task_id(&wt) else { continue };
+            if running.contains(&id) || held_by_live_worker(&ctx.cfg, id) {
+                continue;
+            }
+            let branch = match ctx.client.task(id) {
+                Ok(t) if t.summary.status == "done" => t.summary.branch,
+                Ok(_) => continue,
+                Err(e) if status_of(&e) == Some(404) => String::new(),
+                Err(_) => continue,
+            };
+            taskenv::stop_leftovers(&wt);
+            if git(repo, &["worktree", "remove", "--force", &wt.to_string_lossy()]).is_err() {
+                let _ = std::fs::remove_dir_all(&wt);
+                let _ = git(repo, &["worktree", "prune"]);
+            }
+            if !branch.is_empty() && git::current_branch(repo).as_deref() != Some(branch.as_str()) {
+                let _ = git(repo, &["branch", "-D", &branch]);
+            }
+            println!("[#{id}] removed the worktree of a finished or deleted task ({}).", wt.display());
+        }
+    }
+}
+
 pub fn run(cfg: Config, opts: WorkerOpts) -> Result<()> {
     let client = Client::new(&cfg)?;
     let me = client.me()?;
@@ -484,6 +548,7 @@ pub fn run(cfg: Config, opts: WorkerOpts) -> Result<()> {
     let mut deploying: Option<JoinHandle<()>> = None;
     let mut warned_empty = false;
     let mut pause_announced = false;
+    let mut last_gc: Option<Instant> = None;
     loop {
         agents.retain(|(_, h)| !h.is_finished());
         if deploying.as_ref().is_some_and(|h| h.is_finished()) {
@@ -507,6 +572,11 @@ pub fn run(cfg: Config, opts: WorkerOpts) -> Result<()> {
         }
         let ids: Vec<String> = local.iter().map(|(p, _)| p.id.to_string()).collect();
         let mut claimed = false;
+        if last_gc.is_none_or(|t| t.elapsed() > GC_EVERY) {
+            last_gc = Some(Instant::now());
+            let running: Vec<i64> = agents.iter().map(|(id, _)| *id).collect();
+            gc_worktrees(&ctx, &local, &running);
+        }
 
         if opts.deploy && deploying.is_none() && !local.is_empty() {
             let req = ClaimNext { projects: ids.clone(), status: Some("deploy".into()), ttl_minutes: Some(120) };

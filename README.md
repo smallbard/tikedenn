@@ -145,6 +145,11 @@ repository, `tkd next` and `tkd list` are limited to the project whose
    worktree, reset to the approved branch), checked by the worker (the pushed
    branch must contain the base; it pushes a local unpushed rebase itself),
    then back to review with the report or the failure.
+5. Keeps the machine clean: each agent gets `<worktree>/.tikedenn-tmp` as its
+   temporary folder (`TIKEDENN_TMP`, `TMPDIR`; ignored by git, emptied at the
+   end of the session) instead of `/tmp`; processes the agent left running
+   (test servers…) are stopped when it exits and listed in the task log; the
+   worktrees of done or deleted tasks are removed (checked every hour).
 
 Configuration: `~/.config/tikedenn/config.toml` (see the header of
 `cli/src/config.rs`) — agent commands (`claude_command`, `pi_command`, with

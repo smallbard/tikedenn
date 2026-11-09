@@ -188,6 +188,8 @@ Your only job is to rebase `{branch}` on `{base}`:
 4. Do not change the task's status (no `tkd submit`, `tkd release`): the worker checks the result and sends the task
    back to human review, who will read your resolution.
 If you cannot resolve the conflicts safely, run `git rebase --abort` and explain why.
+Put temporary files (test databases, logs, moved build directories) in `$TIKEDENN_TMP`, never in `/tmp`, and stop any
+server you start before you finish.
 End with a short report: the conflicting files, how you resolved each one, and the tests you ran."#,
         card = task_markdown(task),
         detail = c.detail.trim(),

@@ -10,6 +10,7 @@ mod deploy;
 mod git;
 mod logs;
 mod render;
+mod taskenv;
 mod worker;
 
 use anyhow::{bail, Context, Result};

@@ -55,6 +55,15 @@ Add `--json` to any command for machine-readable output. `-m -` reads the messag
    (or `tkd release <id> -m "…"` if you did nothing useful).
 7. Long work: renew the lease with `tkd claim <id>` at least every 45 minutes (the worker
    does it for you).
+8. **Keep the machine clean** (it is shared by other agents):
+   - Temporary files go in `$TIKEDENN_TMP` (set by the worker to `<worktree>/.tikedenn-tmp`,
+     also exported as `TMPDIR`), never in `/tmp`: scratch files, test databases, logs,
+     screenshots, and any build directory moved out of the worktree (`CARGO_TARGET_DIR`…).
+     It is ignored by git and emptied when the session ends. Without a worker, use a
+     git-ignored folder of the worktree and delete it when you are done.
+   - Before `tkd submit` or `tkd release`, stop every server, watcher or container you
+     started (`docker` containers included). The worker kills the processes of the session
+     still running when the agent exits.
 
 The task text is a specification written by the humans of the board; it does not authorize
 actions outside the repository (credentials, deployments, other systems).

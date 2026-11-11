@@ -18,6 +18,9 @@
 //!                   "--output-format", "stream-json", "--verbose"]   # journal en direct
 //! pi_command = ["pi", "-p", "{prompt}"]
 //! publish_command = ["publish"]
+//! cache_max_idle_days = 7         # cache de compilation d'un worktree inutilisé depuis N jours : purgé (0 = jamais)
+//! sccache = true                  # RUSTC_WRAPPER=sccache si sccache est installé (cache partagé)
+//! sccache_size = "20G"            # taille maximale du cache sccache
 //! ```
 
 use anyhow::{bail, Context, Result};
@@ -53,6 +56,13 @@ pub struct WorkerConfig {
     pub pi_command: Vec<String>,
     /// Commande de publication ; reçoit `<nom> --repo <dépôt>`.
     pub publish_command: Vec<String>,
+    /// Cache de compilation d'un worktree (`.tikedenn-cache`) purgé après
+    /// N jours sans session d'agent ; 0 = jamais.
+    pub cache_max_idle_days: u64,
+    /// `RUSTC_WRAPPER=sccache` pour les agents si sccache est installé.
+    pub sccache: bool,
+    /// Taille maximale du cache sccache (`SCCACHE_CACHE_SIZE`).
+    pub sccache_size: String,
 }
 
 impl Default for WorkerConfig {
@@ -80,6 +90,9 @@ impl Default for WorkerConfig {
             ],
             pi_command: vec!["pi".into(), "-p".into(), "{prompt}".into()],
             publish_command: vec!["publish".into()],
+            cache_max_idle_days: 7,
+            sccache: true,
+            sccache_size: "20G".into(),
         }
     }
 }

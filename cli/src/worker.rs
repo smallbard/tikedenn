@@ -157,12 +157,15 @@ You may add progress notes with `tkd comment {id} -m "…"` and read the task ag
 
 Machine hygiene (other agents share this machine and its disk):
 - Put every temporary file in `$TIKEDENN_TMP` ({tmp}, also exported as `TMPDIR`), never in `/tmp`:
-  scratch files, test databases, logs, screenshots, and any build directory you move out of the worktree
-  (e.g. `CARGO_TARGET_DIR`). It is ignored by git and emptied when your session ends.
+  scratch files, test databases, logs, screenshots. It is ignored by git and emptied when your session ends.
+- Build outputs go in `$TIKEDENN_CACHE` ({cache}), kept from one session to the next: `CARGO_TARGET_DIR` already
+  points to `$TIKEDENN_CACHE/target` — do not override it. Put other build directories you would move out of the
+  worktree (other languages, wasm, e2e builds) under `$TIKEDENN_CACHE` too, never under `$TIKEDENN_TMP` or `/tmp`.
 - Before `tkd submit` or `tkd release`, stop every server, watcher or container you started (including
   `docker` containers). The worker kills the processes of this session that are still running when you exit.
 "#,
         tmp = taskenv::tmp_dir(wt).display(),
+        cache = taskenv::cache_dir(wt).display(),
         card = task_markdown(task),
     )
 }
@@ -226,7 +229,11 @@ pub(crate) fn run_agent(
     // Fichiers temporaires dans le worktree plutôt que dans /tmp ; la
     // variable TIKEDENN_TMP marque aussi les processus de la session.
     let tmp = taskenv::prepare_tmp(wt).with_context(|| format!("Could not create {}", taskenv::tmp_dir(wt).display()))?;
-    let mut child = Command::new(&cmd[0])
+    // Cache de compilation gardé entre les sessions (rebase, reprise après
+    // revue) : pas de recompilation à froid.
+    let cache = taskenv::prepare_cache(wt).with_context(|| format!("Could not create {}", taskenv::cache_dir(wt).display()))?;
+    let mut command = Command::new(&cmd[0]);
+    command
         .args(&cmd[1..])
         .current_dir(wt)
         .env("TIKEDENN_TASK", id.to_string())
@@ -234,6 +241,18 @@ pub(crate) fn run_agent(
         .env("TMPDIR", &tmp)
         .env("TMP", &tmp)
         .env("TEMP", &tmp)
+        .env("TIKEDENN_CACHE", &cache);
+    // Un CARGO_TARGET_DIR / RUSTC_WRAPPER donné au worker reste prioritaire.
+    if std::env::var_os("CARGO_TARGET_DIR").is_none() {
+        command.env("CARGO_TARGET_DIR", cache.join("target"));
+    }
+    if ctx.cfg.worker.sccache && std::env::var_os("RUSTC_WRAPPER").is_none() && taskenv::in_path("sccache") {
+        command.env("RUSTC_WRAPPER", "sccache");
+        if std::env::var_os("SCCACHE_CACHE_SIZE").is_none() {
+            command.env("SCCACHE_CACHE_SIZE", &ctx.cfg.worker.sccache_size);
+        }
+    }
+    let mut child = command
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(log.try_clone()?)
@@ -297,6 +316,7 @@ pub(crate) fn run_agent(
         );
     }
     taskenv::clear_tmp(wt);
+    taskenv::touch_cache(wt);
 
     // Fin du journal (un processus lancé par l'agent peut garder la sortie ouverte).
     let limit = pumped.recv_timeout(Duration::from_secs(5)).ok().flatten();
@@ -497,8 +517,11 @@ const GC_EVERY: Duration = Duration::from_secs(3600);
 
 /// Supprime les worktrees des tâches terminées (done) ou supprimées : un
 /// humain a pu les déplacer sans passer par le déploiement du worker. Ceux
-/// des autres tâches restent (reprise après une revue, une interruption).
+/// des autres tâches restent (reprise après une revue, une interruption),
+/// mais leur cache de compilation est purgé s'il n'a servi à aucune session
+/// depuis `cache_max_idle_days`.
 fn gc_worktrees(ctx: &Ctx, local: &[(Project, PathBuf)], running: &[i64]) {
+    let max_idle = Duration::from_secs(ctx.cfg.worker.cache_max_idle_days * 86_400);
     for (project, repo) in local {
         let dir = ctx.cfg.work_dir().join("worktrees").join(safe_dir_name(&project.name));
         let Ok(entries) = std::fs::read_dir(&dir) else { continue };
@@ -509,7 +532,18 @@ fn gc_worktrees(ctx: &Ctx, local: &[(Project, PathBuf)], running: &[i64]) {
             }
             let branch = match ctx.client.task(id) {
                 Ok(t) if t.summary.status == "done" => t.summary.branch,
-                Ok(_) => continue,
+                Ok(_) => {
+                    let idle = taskenv::cache_idle(&wt);
+                    if !max_idle.is_zero() && idle.is_some_and(|d| d > max_idle) {
+                        taskenv::clear_cache(&wt);
+                        println!(
+                            "[#{id}] purged the build cache of {} (unused for {} days).",
+                            wt.display(),
+                            idle.unwrap_or_default().as_secs() / 86_400
+                        );
+                    }
+                    continue;
+                }
                 Err(e) if status_of(&e) == Some(404) => String::new(),
                 Err(_) => continue,
             };

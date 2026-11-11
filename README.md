@@ -147,9 +147,15 @@ repository, `tkd next` and `tkd list` are limited to the project whose
    then back to review with the report or the failure.
 5. Keeps the machine clean: each agent gets `<worktree>/.tikedenn-tmp` as its
    temporary folder (`TIKEDENN_TMP`, `TMPDIR`; ignored by git, emptied at the
-   end of the session) instead of `/tmp`; processes the agent left running
-   (test servers…) are stopped when it exits and listed in the task log; the
-   worktrees of done or deleted tasks are removed (checked every hour).
+   end of the session) instead of `/tmp`, and `<worktree>/.tikedenn-cache` for
+   build outputs (`TIKEDENN_CACHE`, `CARGO_TARGET_DIR=…/target`), kept between
+   the task's sessions so that a rebase or a new review round does not rebuild
+   from scratch; with `sccache` installed, `RUSTC_WRAPPER=sccache` shares
+   compiled crates between worktrees (`sccache_size`, default 20G). Processes
+   the agent left running (test servers…) are stopped when it exits and listed
+   in the task log. Every hour, the worktrees of done or deleted tasks are
+   removed, and the build cache of a worktree unused for
+   `cache_max_idle_days` (default 7, 0 = never) is purged.
 
 Configuration: `~/.config/tikedenn/config.toml` (see the header of
 `cli/src/config.rs`) — agent commands (`claude_command`, `pi_command`, with

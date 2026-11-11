@@ -58,9 +58,12 @@ Add `--json` to any command for machine-readable output. `-m -` reads the messag
 8. **Keep the machine clean** (it is shared by other agents):
    - Temporary files go in `$TIKEDENN_TMP` (set by the worker to `<worktree>/.tikedenn-tmp`,
      also exported as `TMPDIR`), never in `/tmp`: scratch files, test databases, logs,
-     screenshots, and any build directory moved out of the worktree (`CARGO_TARGET_DIR`…).
-     It is ignored by git and emptied when the session ends. Without a worker, use a
-     git-ignored folder of the worktree and delete it when you are done.
+     screenshots. It is ignored by git and emptied when the session ends.
+   - Build outputs go in `$TIKEDENN_CACHE` (`<worktree>/.tikedenn-cache`), kept between
+     sessions of the task: `CARGO_TARGET_DIR` already points to `$TIKEDENN_CACHE/target`
+     (do not override it); put other build directories (wasm, e2e, other languages) under
+     it too. Without a worker, use git-ignored folders of the worktree and delete them
+     when you are done.
    - Before `tkd submit` or `tkd release`, stop every server, watcher or container you
      started (`docker` containers included). The worker kills the processes of the session
      still running when the agent exits.

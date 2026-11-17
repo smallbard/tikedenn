@@ -161,6 +161,8 @@ Machine hygiene (other agents share this machine and its disk):
 - Build outputs go in `$TIKEDENN_CACHE` ({cache}), kept from one session to the next: `CARGO_TARGET_DIR` already
   points to `$TIKEDENN_CACHE/target` — do not override it. Put other build directories you would move out of the
   worktree (other languages, wasm, e2e builds) under `$TIKEDENN_CACHE` too, never under `$TIKEDENN_TMP` or `/tmp`.
+- A `docker` container that writes into a mounted folder must run as you (`--user "$(id -u):$(id -g)"`): files
+  it creates as root cannot be deleted afterwards.
 - Before `tkd submit` or `tkd release`, stop every server, watcher or container you started (including
   `docker` containers). The worker kills the processes of this session that are still running when you exit.
 "#,
@@ -316,6 +318,11 @@ pub(crate) fn run_agent(
         );
     }
     taskenv::clear_tmp(wt);
+    if taskenv::tmp_dir(wt).exists() {
+        let hint = taskenv::undeletable_hint(&taskenv::tmp_dir(wt));
+        eprintln!("[#{id}] could not empty the temporary folder: {hint}");
+        let _ = ctx.client.comment(id, &format!("The worker could not empty the temporary folder: {hint}."), "comment");
+    }
     taskenv::touch_cache(wt);
 
     // Fin du journal (un processus lancé par l'agent peut garder la sortie ouverte).
@@ -520,13 +527,18 @@ const GC_EVERY: Duration = Duration::from_secs(3600);
 /// des autres tâches restent (reprise après une revue, une interruption),
 /// mais leur cache de compilation est purgé s'il n'a servi à aucune session
 /// depuis `cache_max_idle_days`.
-fn gc_worktrees(ctx: &Ctx, local: &[(Project, PathBuf)], running: &[i64]) {
+fn gc_worktrees(ctx: &Ctx, local: &[(Project, PathBuf)], running: &[i64], stuck: &mut std::collections::HashSet<PathBuf>) {
     let max_idle = Duration::from_secs(ctx.cfg.worker.cache_max_idle_days * 86_400);
     for (project, repo) in local {
         let dir = ctx.cfg.work_dir().join("worktrees").join(safe_dir_name(&project.name));
         let Ok(entries) = std::fs::read_dir(&dir) else { continue };
         for wt in entries.flatten().map(|e| e.path()) {
             let Some(id) = taskenv::worktree_task_id(&wt) else { continue };
+            // Déjà signalé comme impossible à supprimer : pas de nouvel essai
+            // à chaque tour (il faut une intervention humaine).
+            if stuck.contains(&wt) {
+                continue;
+            }
             if running.contains(&id) || held_by_live_worker(&ctx.cfg, id) {
                 continue;
             }
@@ -554,6 +566,14 @@ fn gc_worktrees(ctx: &Ctx, local: &[(Project, PathBuf)], running: &[i64]) {
             }
             if !branch.is_empty() && git::current_branch(repo).as_deref() != Some(branch.as_str()) {
                 let _ = git(repo, &["branch", "-D", &branch]);
+            }
+            if wt.exists() {
+                eprintln!(
+                    "[#{id}] could not remove the worktree of a finished or deleted task: {}",
+                    taskenv::undeletable_hint(&wt)
+                );
+                stuck.insert(wt);
+                continue;
             }
             println!("[#{id}] removed the worktree of a finished or deleted task ({}).", wt.display());
         }
@@ -583,6 +603,7 @@ pub fn run(cfg: Config, opts: WorkerOpts) -> Result<()> {
     let mut warned_empty = false;
     let mut pause_announced = false;
     let mut last_gc: Option<Instant> = None;
+    let mut stuck_worktrees = std::collections::HashSet::new();
     loop {
         agents.retain(|(_, h)| !h.is_finished());
         if deploying.as_ref().is_some_and(|h| h.is_finished()) {
@@ -609,7 +630,8 @@ pub fn run(cfg: Config, opts: WorkerOpts) -> Result<()> {
         if last_gc.is_none_or(|t| t.elapsed() > GC_EVERY) {
             last_gc = Some(Instant::now());
             let running: Vec<i64> = agents.iter().map(|(id, _)| *id).collect();
-            gc_worktrees(&ctx, &local, &running);
+            stuck_worktrees.retain(|wt: &PathBuf| wt.exists());
+            gc_worktrees(&ctx, &local, &running, &mut stuck_worktrees);
         }
 
         if opts.deploy && deploying.is_none() && !local.is_empty() {

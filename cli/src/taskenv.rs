@@ -62,6 +62,41 @@ pub fn clear_cache(wt: &Path) {
     let _ = std::fs::remove_dir_all(cache_dir(wt));
 }
 
+/// Premier fichier de `dir` qui n'appartient pas à l'utilisateur courant
+/// (créé par exemple par un conteneur docker lancé en root) : le worker ne
+/// peut pas le supprimer. Renvoie le chemin et le uid du propriétaire.
+pub fn foreign_file(dir: &Path) -> Option<(PathBuf, u32)> {
+    use std::os::unix::fs::MetadataExt;
+    let me = std::fs::metadata(dir.parent()?).ok()?.uid();
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(d) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&d) else { continue };
+        for e in entries.flatten() {
+            let Ok(meta) = e.path().symlink_metadata() else { continue };
+            if meta.uid() != me {
+                return Some((e.path(), meta.uid()));
+            }
+            if meta.is_dir() {
+                stack.push(e.path());
+            }
+        }
+    }
+    None
+}
+
+/// Explication d'un dossier impossible à supprimer, avec la commande à lancer.
+pub fn undeletable_hint(dir: &Path) -> String {
+    match foreign_file(dir) {
+        Some((file, uid)) => format!(
+            "{} is owned by uid {uid}{} (probably created by a docker container): remove the folder with `sudo rm -rf {}`",
+            file.display(),
+            if uid == 0 { " (root)" } else { "" },
+            dir.display()
+        ),
+        None => format!("remove it by hand: `rm -rf {}`", dir.display()),
+    }
+}
+
 /// Vrai si `program` est dans le PATH.
 pub fn in_path(program: &str) -> bool {
     std::env::var_os("PATH")

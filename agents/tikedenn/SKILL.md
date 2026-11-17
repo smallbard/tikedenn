@@ -64,6 +64,8 @@ Add `--json` to any command for machine-readable output. `-m -` reads the messag
      (do not override it); put other build directories (wasm, e2e, other languages) under
      it too. Without a worker, use git-ignored folders of the worktree and delete them
      when you are done.
+   - A `docker` container writing into a mounted folder must run as you
+     (`--user "$(id -u):$(id -g)"`): files it creates as root cannot be deleted afterwards.
    - Before `tkd submit` or `tkd release`, stop every server, watcher or container you
      started (`docker` containers included). The worker kills the processes of the session
      still running when the agent exits.

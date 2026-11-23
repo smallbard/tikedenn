@@ -232,7 +232,10 @@ pub(crate) fn run_agent(
     // variable TIKEDENN_TMP marque aussi les processus de la session.
     let tmp = taskenv::prepare_tmp(wt).with_context(|| format!("Could not create {}", taskenv::tmp_dir(wt).display()))?;
     // Cache de compilation gardé entre les sessions (rebase, reprise après
-    // revue) : pas de recompilation à froid.
+    // revue) : pas de recompilation à froid, sauf s'il a trop grossi.
+    if let Some(size) = taskenv::trim_cache(wt, ctx.cfg.worker.cache_max_gb) {
+        println!("[#{id}] emptied the build cache of {} ({} GB, over cache_max_gb).", wt.display(), size / 1_000_000_000);
+    }
     let cache = taskenv::prepare_cache(wt).with_context(|| format!("Could not create {}", taskenv::cache_dir(wt).display()))?;
     let mut command = Command::new(&cmd[0]);
     command
@@ -526,7 +529,7 @@ const GC_EVERY: Duration = Duration::from_secs(3600);
 /// humain a pu les déplacer sans passer par le déploiement du worker. Ceux
 /// des autres tâches restent (reprise après une revue, une interruption),
 /// mais leur cache de compilation est purgé s'il n'a servi à aucune session
-/// depuis `cache_max_idle_days`.
+/// depuis `cache_max_idle_days` ou s'il dépasse `cache_max_gb`.
 fn gc_worktrees(ctx: &Ctx, local: &[(Project, PathBuf)], running: &[i64], stuck: &mut std::collections::HashSet<PathBuf>) {
     let max_idle = Duration::from_secs(ctx.cfg.worker.cache_max_idle_days * 86_400);
     for (project, repo) in local {
@@ -552,6 +555,12 @@ fn gc_worktrees(ctx: &Ctx, local: &[(Project, PathBuf)], running: &[i64], stuck:
                             "[#{id}] purged the build cache of {} (unused for {} days).",
                             wt.display(),
                             idle.unwrap_or_default().as_secs() / 86_400
+                        );
+                    } else if let Some(size) = taskenv::trim_cache(&wt, ctx.cfg.worker.cache_max_gb) {
+                        println!(
+                            "[#{id}] emptied the build cache of {} ({} GB, over cache_max_gb).",
+                            wt.display(),
+                            size / 1_000_000_000
                         );
                     }
                     continue;

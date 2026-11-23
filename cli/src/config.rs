@@ -19,6 +19,7 @@
 //! pi_command = ["pi", "-p", "{prompt}"]
 //! publish_command = ["publish"]
 //! cache_max_idle_days = 7         # cache de compilation d'un worktree inutilisé depuis N jours : purgé (0 = jamais)
+//! cache_max_gb = 30               # cache de compilation d'un worktree vidé au-delà de N Go (0 = pas de limite)
 //! sccache = true                  # RUSTC_WRAPPER=sccache si sccache est installé (cache partagé)
 //! sccache_size = "20G"            # taille maximale du cache sccache
 //! ```
@@ -59,6 +60,9 @@ pub struct WorkerConfig {
     /// Cache de compilation d'un worktree (`.tikedenn-cache`) purgé après
     /// N jours sans session d'agent ; 0 = jamais.
     pub cache_max_idle_days: u64,
+    /// Cache de compilation d'un worktree vidé au début d'une session ou au
+    /// ménage s'il dépasse N Go ; 0 = pas de limite.
+    pub cache_max_gb: u64,
     /// `RUSTC_WRAPPER=sccache` pour les agents si sccache est installé.
     pub sccache: bool,
     /// Taille maximale du cache sccache (`SCCACHE_CACHE_SIZE`).
@@ -91,6 +95,7 @@ impl Default for WorkerConfig {
             pi_command: vec!["pi".into(), "-p".into(), "{prompt}".into()],
             publish_command: vec!["publish".into()],
             cache_max_idle_days: 7,
+            cache_max_gb: 30,
             sccache: true,
             sccache_size: "20G".into(),
         }

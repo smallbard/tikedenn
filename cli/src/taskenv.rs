@@ -11,7 +11,8 @@ use std::time::{Duration, Instant, SystemTime};
 /// chaque session).
 pub const TMP_DIR: &str = ".tikedenn-tmp";
 /// Cache de compilation du worktree (gardé d'une session à l'autre,
-/// supprimé avec le worktree ou après `cache_max_idle_days`).
+/// supprimé avec le worktree, après `cache_max_idle_days` ou au-delà de
+/// `cache_max_gb`).
 pub const CACHE_DIR: &str = ".tikedenn-cache";
 /// Date de la dernière session d'agent, dans le cache.
 const LAST_USED: &str = ".last-used";
@@ -55,6 +56,38 @@ pub fn cache_idle(wt: &Path) -> Option<Duration> {
     let dir = cache_dir(wt);
     let meta = std::fs::metadata(dir.join(LAST_USED)).or_else(|_| std::fs::metadata(&dir)).ok()?;
     Some(SystemTime::now().duration_since(meta.modified().ok()?).unwrap_or_default())
+}
+
+/// Taille du cache de compilation du worktree, en octets (0 : pas de cache).
+/// Les liens symboliques ne sont pas suivis.
+pub fn cache_size(wt: &Path) -> u64 {
+    fn walk(dir: &Path) -> u64 {
+        let Ok(entries) = std::fs::read_dir(dir) else { return 0 };
+        entries
+            .flatten()
+            .map(|e| match e.file_type() {
+                Ok(t) if t.is_dir() => walk(&e.path()),
+                Ok(t) if t.is_file() => e.metadata().map(|m| m.len()).unwrap_or(0),
+                _ => 0,
+            })
+            .sum()
+    }
+    walk(&cache_dir(wt))
+}
+
+/// Vide le cache s'il dépasse `max_gb` Go (0 = pas de limite) : cargo ne
+/// supprime jamais ses anciennes sorties, et le cache d'une tâche qui reste
+/// active n'est jamais purgé pour inactivité. Renvoie la taille supprimée.
+pub fn trim_cache(wt: &Path, max_gb: u64) -> Option<u64> {
+    if max_gb == 0 {
+        return None;
+    }
+    let size = cache_size(wt);
+    if size <= max_gb * 1_000_000_000 {
+        return None;
+    }
+    clear_cache(wt);
+    Some(size)
 }
 
 /// Supprime le cache de compilation du worktree.
@@ -196,6 +229,10 @@ mod tests {
         let st = Command::new("git").arg("-C").arg(&base).args(["status", "--porcelain"]).output().unwrap();
         assert_eq!(String::from_utf8_lossy(&st.stdout), "");
         assert!(cache_idle(&base).unwrap() < Duration::from_secs(60));
+        std::fs::write(cache.join("target/debug/big"), vec![0u8; 2_000]).unwrap();
+        assert!(cache_size(&base) >= 2_000);
+        assert_eq!(trim_cache(&base, 0), None, "0 = no limit");
+        assert_eq!(trim_cache(&base, 1), None, "under the limit");
         clear_tmp(&base);
         assert!(!tmp.exists());
         assert!(cache.join("target/debug").exists(), "the build cache survives the session");

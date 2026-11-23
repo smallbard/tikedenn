@@ -155,7 +155,9 @@ repository, `tkd next` and `tkd list` are limited to the project whose
    the agent left running (test servers…) are stopped when it exits and listed
    in the task log. Every hour, the worktrees of done or deleted tasks are
    removed, and the build cache of a worktree unused for
-   `cache_max_idle_days` (default 7, 0 = never) is purged.
+   `cache_max_idle_days` (default 7, 0 = never) is purged. A build cache over
+   `cache_max_gb` (default 30, 0 = no limit) is emptied at the start of a
+   session or at the hourly cleanup, since cargo never removes stale outputs.
 
 Configuration: `~/.config/tikedenn/config.toml` (see the header of
 `cli/src/config.rs`) — agent commands (`claude_command`, `pi_command`, with

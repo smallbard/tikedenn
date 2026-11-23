@@ -468,6 +468,8 @@ pub struct DashboardTemplate {
     /// Id du projet de filtre sélectionné (0 = tous).
     pub selected_project: i64,
     pub columns: Vec<Column>,
+    /// Agents suspendus depuis le tableau (bandeau et bouton).
+    pub suspension: Option<workflow::Suspension>,
 }
 
 /// Le tableau seul (rafraîchissement périodique htmx).
@@ -476,6 +478,7 @@ pub struct DashboardTemplate {
 pub struct BoardTemplate {
     pub selected_project: i64,
     pub columns: Vec<Column>,
+    pub suspension: Option<workflow::Suspension>,
 }
 
 #[derive(Template)]
@@ -557,6 +560,7 @@ pub async fn dashboard(
         projects,
         selected_project: selected,
         columns,
+        suspension: workflow::suspension(&conn)?,
     }))
 }
 
@@ -571,7 +575,7 @@ pub async fn board_fragment(
     let conn = state.conn()?;
     let projects = fetch_projects(&conn, user.id)?;
     let columns = board_columns(&conn, user.id, &projects, selected)?;
-    Ok(render(&BoardTemplate { selected_project: selected, columns }))
+    Ok(render(&BoardTemplate { selected_project: selected, columns, suspension: workflow::suspension(&conn)? }))
 }
 
 /// Page de création d'une tâche (formulaire sur sa propre page).
@@ -819,6 +823,23 @@ pub struct FilterForm {
     /// Filtre projet actif (préserve la vue après l'action).
     #[serde(default)]
     filter: i64,
+}
+
+/// Suspend les agents : ils finissent leurs tâches en cours mais n'en
+/// prennent plus en todo (voir `workflow::suspension`).
+pub async fn suspend_agents(
+    State(state): State<AppState>,
+    Extension(user): Extension<CurrentUser>,
+    Form(f): Form<FilterForm>,
+) -> AppResult {
+    workflow::suspend_agents(&*state.conn()?, &user.username)?;
+    Ok(redirect_dashboard(f.filter))
+}
+
+/// Lève la suspension des agents.
+pub async fn resume_agents(State(state): State<AppState>, Form(f): Form<FilterForm>) -> AppResult {
+    workflow::resume_agents(&*state.conn()?)?;
+    Ok(redirect_dashboard(f.filter))
 }
 
 /// Supprime une tâche (fichiers, journal et dépendances en cascade).

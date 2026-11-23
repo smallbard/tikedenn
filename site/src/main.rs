@@ -150,6 +150,8 @@ async fn main() -> anyhow::Result<()> {
         .route("/tasks/{id}", post(board::update_task))
         .route("/tasks/{id}/move", post(board::move_task))
         .route("/tasks/{id}/delete", post(board::delete_task))
+        .route("/agents/suspend", post(board::suspend_agents))
+        .route("/agents/resume", post(board::resume_agents))
         .route("/tasks/{id}/comments", post(review::add_comment))
         .route("/tasks/{id}/approve", post(review::approve))
         .route("/tasks/{id}/request-changes", post(review::request_changes))

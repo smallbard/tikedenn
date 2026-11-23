@@ -349,10 +349,12 @@ fn run_api(cmd: Cmd, cfg: &Config, client: &Client, json: bool) -> Result<()> {
             };
             let req = ClaimNext { projects, status: Some("todo".into()), ttl_minutes: ttl };
             match client.claim_next(&req)? {
-                Some(t) => print_task(json, &t)?,
-                None => {
+                client::Next::Task(t) => print_task(json, &t)?,
+                none => {
                     if json {
                         println!("null");
+                    } else if matches!(none, client::Next::Suspended) {
+                        eprintln!("No task: agents are suspended from the board (they finish their current tasks but take no new ones).");
                     } else {
                         eprintln!("No task available.");
                     }

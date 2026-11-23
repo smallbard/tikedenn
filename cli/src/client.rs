@@ -117,13 +117,14 @@ impl Client {
         self.send("POST", &format!("/tasks/{id}/claim"), &Claim { ttl_minutes, status })
     }
 
-    /// Prochaine tâche prise en charge, ou None (204) s'il n'y en a pas.
-    pub fn claim_next(&self, c: &ClaimNext) -> Result<Option<TaskDetail>> {
+    /// Prochaine tâche prise en charge, ou rien (204) s'il n'y en a pas ou
+    /// si les agents sont suspendus depuis le tableau.
+    pub fn claim_next(&self, c: &ClaimNext) -> Result<Next> {
         let resp = Self::check(self.request("POST", "/tasks/claim-next").send_json(c))?;
         if resp.status() == 204 {
-            return Ok(None);
+            return Ok(if resp.header("tikedenn-agents-suspended").is_some() { Next::Suspended } else { Next::None });
         }
-        Ok(Some(resp.into_json()?))
+        Ok(Next::Task(Box::new(resp.into_json()?)))
     }
 
     pub fn release(&self, id: i64, status: Option<&str>, note: Option<&str>) -> Result<TaskDetail> {
@@ -169,4 +170,13 @@ fn urlencode(s: &str) -> String {
         }
     }
     out
+}
+
+/// Résultat de `claim_next`.
+pub enum Next {
+    Task(Box<TaskDetail>),
+    /// Aucune tâche disponible.
+    None,
+    /// Agents suspendus depuis le tableau (pas de nouvelle tâche todo).
+    Suspended,
 }

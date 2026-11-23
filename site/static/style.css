@@ -123,6 +123,24 @@ button:hover { filter: brightness(1.1); }
 @media (max-width: 560px) { .board { grid-template-columns: 1fr; } }
 /* Mobile : une seule colonne, choisie dans la liste déroulante. */
 .col-picker { display: none; }
+/* Suspension des agents : bouton discret, bandeau quand elle est active. */
+.agents-bar {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.8rem;
+  flex-wrap: wrap;
+}
+.agents-bar form { margin: 0; }
+.agents-bar .btn { padding: 0.3rem 0.8rem; font-size: 0.9rem; cursor: pointer; }
+.agents-bar.suspended {
+  justify-content: space-between;
+  padding: 0.6rem 0.9rem;
+  border: 1px solid #b8892e;
+  border-radius: 8px;
+  background: rgba(184, 137, 46, 0.15);
+}
 @media (max-width: 560px) {
   #board .col-picker { display: block; width: 100%; font-size: 1rem; }
   #board-wrap[data-show="draft"] .col:not(.col-draft),

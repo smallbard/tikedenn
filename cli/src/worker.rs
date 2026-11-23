@@ -4,7 +4,7 @@
 //! (merge + publish) les tâches approuvées par un humain.
 
 use crate::agent_log;
-use crate::client::{status_of, Client};
+use crate::client::{status_of, Client, Next};
 use crate::config::{tail_file, Config};
 use crate::deploy;
 use crate::git::{self, base_branch, find_local_repo, git, remote_branch_exists};
@@ -620,6 +620,8 @@ pub fn run(cfg: Config, opts: WorkerOpts) -> Result<()> {
     let mut deploying: Option<JoinHandle<()>> = None;
     let mut warned_empty = false;
     let mut pause_announced = false;
+    // Suspension des agents depuis le tableau, annoncée une fois.
+    let mut suspend_announced = false;
     let mut last_gc: Option<Instant> = None;
     let mut stuck_worktrees = std::collections::HashSet::new();
     loop {
@@ -655,14 +657,15 @@ pub fn run(cfg: Config, opts: WorkerOpts) -> Result<()> {
         if opts.deploy && deploying.is_none() && !local.is_empty() {
             let req = ClaimNext { projects: ids.clone(), status: Some("deploy".into()), ttl_minutes: Some(120) };
             match ctx.client.claim_next(&req) {
-                Ok(Some(task)) => {
+                Ok(Next::Task(task)) => {
+                    let task = *task;
                     claimed = true;
                     if let Some((project, repo)) = local.iter().find(|(p, _)| Some(p.id) == task.summary.project_id) {
                         let (ctx2, project, repo, agent2) = (ctx.clone(), project.clone(), repo.clone(), opts.agent.clone());
                         deploying = Some(thread::spawn(move || deploy::deploy_and_report(&ctx2, task, &project, &repo, false, &agent2)));
                     }
                 }
-                Ok(None) => {}
+                Ok(_) => {}
                 Err(e) => eprintln!("Could not claim a deploy task: {e:#}"),
             }
         }
@@ -699,8 +702,10 @@ pub fn run(cfg: Config, opts: WorkerOpts) -> Result<()> {
         while work && agents.len() < opts.max_parallel && !local.is_empty() {
             let req = ClaimNext { projects: ids.clone(), status: Some("todo".into()), ttl_minutes: Some(CLAIM_TTL_MINUTES) };
             match ctx.client.claim_next(&req) {
-                Ok(Some(task)) => {
+                Ok(Next::Task(task)) => {
+                    let task = *task;
                     claimed = true;
+                    suspend_announced = false;
                     match local.iter().find(|(p, _)| Some(p.id) == task.summary.project_id) {
                         Some((project, repo)) => {
                             let agent = project_agent(project, &opts.agent);
@@ -709,7 +714,17 @@ pub fn run(cfg: Config, opts: WorkerOpts) -> Result<()> {
                         None => break,
                     }
                 }
-                Ok(None) => break,
+                Ok(Next::None) => {
+                    suspend_announced = false;
+                    break;
+                }
+                Ok(Next::Suspended) => {
+                    if !suspend_announced {
+                        println!("Agents suspended from the board: current tasks go on, no new task is taken until the suspension is lifted.");
+                        suspend_announced = true;
+                    }
+                    break;
+                }
                 Err(e) => {
                     eprintln!("Could not claim a task: {e:#}");
                     break;

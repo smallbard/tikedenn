@@ -104,6 +104,20 @@ pub fn init_app_schema(conn: &Connection) -> anyhow::Result<()> {
              COMMIT;",
         )?;
     }
+    if version < 5 {
+        // Suspension des agents demandée depuis le tableau (une ligne au plus :
+        // présente = agents suspendus).
+        conn.execute_batch(
+            "BEGIN;
+             CREATE TABLE agents_suspension (
+                 id INTEGER PRIMARY KEY CHECK (id = 1),
+                 suspended_by TEXT NOT NULL,
+                 since TEXT NOT NULL DEFAULT (datetime('now'))
+             );
+             PRAGMA user_version = 5;
+             COMMIT;",
+        )?;
+    }
     Ok(())
 }
 
@@ -366,7 +380,7 @@ mod tests {
         init_app_schema(&conn).unwrap();
         let ddl = table_sql(&conn, "projects").unwrap();
         init_app_schema(&conn).unwrap();
-        assert_eq!(version(&conn), 4);
+        assert_eq!(version(&conn), 5);
         assert_eq!(table_sql(&conn, "projects").unwrap(), ddl);
         assert!(!has_column(&conn, "projects", "git_token").unwrap());
     }
@@ -393,7 +407,7 @@ mod tests {
         )
         .unwrap();
         init_app_schema(&conn).unwrap();
-        assert_eq!(version(&conn), 4);
+        assert_eq!(version(&conn), 5);
         assert!(has_column(&conn, "users", "is_admin").unwrap());
         assert!(has_column(&conn, "tasks", "branch").unwrap());
         assert!(table_sql(&conn, "tasks").unwrap().contains("'review'"));

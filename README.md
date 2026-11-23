@@ -46,11 +46,14 @@ these transitions are reserved for humans (enforced by the server).
   deletes accounts.
 - **Board shared** by all users, filterable by project and refreshed
   automatically (htmx): priority, dependencies ("blocked by #12"), agent
-  holding the task, branch. Drag and drop between columns. The *Draft* and
-  *To do* columns follow the agents' **processing order** (ready tasks first,
-  then tasks waiting for their dependencies, placed after them; rank and
-  "next" badge in *To do*); a task **inherits the priority** of the tasks
-  waiting for it ("urgent ↑ #42"). Hovering a card highlights its
+  holding the task, branch. Drag and drop between columns. The *To do*
+  column follows the agents' **processing order** (ready tasks first, then
+  tasks waiting for their dependencies, placed after them; rank and "next"
+  badge); *Draft* shows ready drafts then waiting ones, each by priority then
+  newest first. A task **inherits the priority** of the tasks waiting for it
+  ("urgent ↑ #42"). **Suspend agents** (button above the board): agents
+  finish their current tasks and deployments go on, but no `todo` task is
+  taken until the suspension is lifted (banner shown to everyone). Hovering a card highlights its
   dependencies and the tasks waiting for it. On mobile, a single column is
   shown, picked from a drop-down list (*To review* by default).
 - **Task**: description and **acceptance criteria** in Markdown (mermaid
@@ -120,7 +123,8 @@ repository, `tkd next` and `tkd list` are limited to the project whose
    `origin` matches the project's repository. Projects whose agent is *None*
    are skipped.
 2. Takes the `todo` tasks of these projects (effective priority — inherited
-   from the tasks waiting for them — then age, skipping blocked tasks),
+   from the tasks waiting for them — then age, skipping blocked tasks; none
+   while agents are suspended from the board),
    creates a **git worktree per task** on its branch (`task/<id>-<slug>`),
    runs the project's agent (otherwise the one from `--agent` / the config)
    with the task and the protocol, and renews the lease while it works.

@@ -232,6 +232,9 @@ pub fn op_claim(conn: &Connection, actor: &Actor, id: i64, c: &Claim) -> ApiResu
     op_get_task(conn, actor, id)
 }
 
+/// En-tête d'une réponse 204 de claim-next quand les agents sont suspendus.
+pub const AGENTS_SUSPENDED_HEADER: &str = "tikedenn-agents-suspended";
+
 pub fn op_claim_next(conn: &Connection, actor: &Actor, c: &ClaimNext) -> ApiResult<Option<TaskDetail>> {
     let mut ids = vec![];
     for p in &c.projects {
@@ -366,8 +369,14 @@ pub async fn claim_next(
     body: Option<Json<ClaimNext>>,
 ) -> ApiResult<Response> {
     let c = body.map(|Json(c)| c).unwrap_or_default();
-    Ok(match op_claim_next(&*state.conn()?, &actor, &c)? {
+    let conn = state.conn()?;
+    Ok(match op_claim_next(&conn, &actor, &c)? {
         Some(task) => Json(task).into_response(),
+        // Rien à prendre parce que les agents sont suspendus depuis le
+        // tableau : signalé par un en-tête (le worker l'annonce).
+        None if c.status.as_deref().unwrap_or("todo") == "todo" && workflow::suspension(&conn)?.is_some() => {
+            (StatusCode::NO_CONTENT, [(AGENTS_SUSPENDED_HEADER, "1")]).into_response()
+        }
         None => StatusCode::NO_CONTENT.into_response(),
     })
 }

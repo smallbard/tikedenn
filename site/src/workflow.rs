@@ -1,6 +1,7 @@
 //! Cycle de vie des tâches, commun à l'UI (humains) et à l'API (agents) :
 //! changements d'état (avec les restrictions des agents), prise en charge
-//! d'une tâche par un agent (bail renouvelable), journal de la tâche.
+//! d'une tâche par un agent (bail renouvelable), journal de la tâche,
+//! suspension des agents.
 
 use crate::auth::CurrentUser;
 use crate::notify;
@@ -152,6 +153,36 @@ fn blocked_message(ids: &[i64]) -> String {
     format!("The task is blocked by {} (not done yet).", list.join(", "))
 }
 
+/// Suspension des agents (demandée depuis le tableau) : ils finissent leurs
+/// tâches en cours et les déploiements continuent, mais aucune tâche todo
+/// n'est prise tant qu'elle n'est pas levée.
+pub struct Suspension {
+    pub by: String,
+    pub since: String,
+}
+
+pub const SUSPENDED_MESSAGE: &str =
+    "Agents are suspended from the board: they finish their current tasks but take no new ones.";
+
+pub fn suspension(conn: &Connection) -> rusqlite::Result<Option<Suspension>> {
+    conn.query_row("SELECT suspended_by, since FROM agents_suspension WHERE id = 1", [], |r| {
+        Ok(Suspension { by: r.get(0)?, since: r.get(1)? })
+    })
+    .optional()
+}
+
+/// Suspend les agents (sans effet si c'est déjà le cas).
+pub fn suspend_agents(conn: &Connection, by: &str) -> rusqlite::Result<()> {
+    conn.execute("INSERT OR IGNORE INTO agents_suspension (id, suspended_by) VALUES (1, ?1)", [by])?;
+    Ok(())
+}
+
+/// Lève la suspension des agents.
+pub fn resume_agents(conn: &Connection) -> rusqlite::Result<()> {
+    conn.execute("DELETE FROM agents_suspension", [])?;
+    Ok(())
+}
+
 /// Ajoute une entrée au journal de la tâche.
 pub fn log(conn: &Connection, task_id: i64, actor: &Actor, kind: &str, body: &str) -> rusqlite::Result<()> {
     conn.execute(
@@ -278,6 +309,9 @@ pub fn claim(conn: &Connection, actor: &Actor, id: i64, ttl: Option<i64>, expect
     if st.status == "todo" && !st.blocked_by.is_empty() {
         return Err(WfError::Conflict(blocked_message(&st.blocked_by)));
     }
+    if st.status == "todo" && actor.is_agent() && suspension(conn)?.is_some() {
+        return Err(WfError::Conflict(SUSPENDED_MESSAGE.into()));
+    }
     let ttl = clamp_ttl(ttl);
     let to = if st.status == "todo" { "progress" } else { st.status.as_str() };
     // Condition répétée dans l'UPDATE : deux agents concurrents ne peuvent
@@ -343,6 +377,11 @@ pub fn claim_next(
         "deploy" => "t.status = 'deploy'",
         _ => return Err(WfError::Invalid("Only todo or deploy tasks can be claimed.".into())),
     };
+    // Agents suspendus : pas de nouveau travail (ni de tâche abandonnée à
+    // reprendre) ; les déploiements continuent.
+    if status == "todo" && actor.is_agent() && suspension(conn)?.is_some() {
+        return Ok(None);
+    }
     let project_cond = if projects.is_empty() {
         String::new()
     } else {
@@ -403,6 +442,26 @@ mod tests {
 
     fn status(conn: &Connection, id: i64) -> String {
         conn.query_row("SELECT status FROM tasks WHERE id = ?1", [id], |r| r.get(0)).unwrap()
+    }
+
+    #[test]
+    fn suspended_agents_take_no_todo_but_finish_and_deploy() {
+        let conn = setup();
+        let a = agent("claude");
+        assert_eq!(claim_next(&conn, &a, &[], "todo", None).unwrap(), Some(2));
+        conn.execute("INSERT INTO tasks (user_id, title, status) VALUES (1, 'ship', 'deploy')", []).unwrap();
+        suspend_agents(&conn, "olivier").unwrap();
+        suspend_agents(&conn, "other").unwrap();
+        assert_eq!(suspension(&conn).unwrap().unwrap().by, "olivier");
+        assert_eq!(claim_next(&conn, &a, &[], "todo", None).unwrap(), None);
+        assert!(matches!(claim(&conn, &a, 1, None, None), Err(WfError::Conflict(m)) if m == SUSPENDED_MESSAGE));
+        // Tâche en cours : bail renouvelé ; déploiement : toujours pris.
+        assert!(!claim(&conn, &a, 2, None, None).unwrap());
+        assert_eq!(claim_next(&conn, &a, &[], "deploy", None).unwrap(), Some(4));
+        // Un humain peut toujours prendre une tâche todo.
+        assert!(claim(&conn, &Actor::Human(user()), 1, None, None).unwrap());
+        resume_agents(&conn).unwrap();
+        assert!(suspension(&conn).unwrap().is_none());
     }
 
     #[test]

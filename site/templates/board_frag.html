@@ -4,6 +4,22 @@
      hx-get="/dashboard/board?project={{ selected_project }}"
      hx-trigger="every 20s [!document.querySelector('.dragging')]"
      hx-swap="outerHTML">
+  <!-- Suspension des agents : ils finissent leurs tâches en cours, mais ne
+       prennent plus de tâche todo tant qu'elle n'est pas levée. -->
+  <div class="agents-bar{% if suspension.is_some() %} suspended{% endif %}">
+    {% if let Some(s) = suspension %}
+    <span>⏸ <strong>Agents suspended</strong> by {{ s.by }} since {{ s.since }} UTC: they finish their current tasks but take no new ones from To do.</span>
+    <form method="post" action="/agents/resume">
+      <input type="hidden" name="filter" value="{{ selected_project }}">
+      <button type="submit" class="btn">Resume agents</button>
+    </form>
+    {% else %}
+    <form method="post" action="/agents/suspend">
+      <input type="hidden" name="filter" value="{{ selected_project }}">
+      <button type="submit" class="btn btn-ghost" title="Agents finish their current tasks but take no new ones until you resume them">⏸ Suspend agents</button>
+    </form>
+    {% endif %}
+  </div>
   <!-- Mobile : une seule colonne, choisie ici (voir dashboard.html). -->
   <select class="col-picker" aria-label="Column">
     {% for c in columns %}

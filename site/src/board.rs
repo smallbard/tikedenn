@@ -292,8 +292,10 @@ pub fn fetch_tasks(conn: &Connection, user_id: i64, f: &TaskFilter) -> rusqlite:
 }
 
 /// Trie les tâches par état, puis dans chaque colonne :
-/// - draft : la plus récemment créée en haut (souvent passée aussitôt en
-///   todo ; les vieux brouillons restent en bas) ;
+/// - draft : les prêtes, puis celles qui attendent une dépendance
+///   (séparateur) ; dans chaque groupe, priorité effective puis la plus
+///   récemment créée en haut (souvent passée aussitôt en todo ; les vieux
+///   brouillons restent en bas) ;
 /// - todo : ordre de traitement (`order::Graph::plan`), annoté du début des
 ///   tâches en attente, du rang et de la prochaine tâche des agents ;
 /// - progress, review : arrivée dans l'état (la plus ancienne en haut) ;
@@ -313,7 +315,7 @@ fn order_tasks(conn: &Connection, tasks: &mut [TaskRow]) -> rusqlite::Result<()>
     let column = |s: &str| STATUSES.iter().position(|c| c.value == s).unwrap_or(STATUSES.len());
     tasks.sort_by_key(|t| {
         let key = match t.status.as_str() {
-            "draft" => (-t.id, 0, 0),
+            "draft" => (i64::from(!graph.is_ready(t.id)), -t.eff_priority, -t.id),
             "todo" => (plan.get(&t.id).map_or(i64::MAX, |&i| i as i64), 0, 0),
             "deploy" => (-t.priority, t.state_seq, t.id),
             "done" => (-t.state_seq, -t.id, 0),
@@ -321,7 +323,14 @@ fn order_tasks(conn: &Connection, tasks: &mut [TaskRow]) -> rusqlite::Result<()>
         };
         (column(&t.status), key)
     });
-    // Rang, « next » et séparateur « en attente » en todo.
+    // Séparateur « en attente » en draft et en todo ; rang et « next » en todo.
+    let mut draft_waiting_found = false;
+    for t in tasks.iter_mut().filter(|t| t.status == "draft") {
+        if !graph.is_ready(t.id) && !draft_waiting_found {
+            t.first_waiting = true;
+            draft_waiting_found = true;
+        }
+    }
     let (mut rank, mut next_found, mut waiting_found) = (0, false, false);
     for t in tasks.iter_mut().filter(|t| t.status == "todo") {
         rank += 1;

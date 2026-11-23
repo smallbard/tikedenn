@@ -22,6 +22,7 @@
 //! cache_max_gb = 30               # cache de compilation d'un worktree vidé au-delà de N Go (0 = pas de limite)
 //! sccache = true                  # RUSTC_WRAPPER=sccache si sccache est installé (cache partagé)
 //! sccache_size = "20G"            # taille maximale du cache sccache
+//! cargo_debug = "line-tables-only" # infos de débogage des builds dev/test des agents ("" = celles du projet)
 //! ```
 
 use anyhow::{bail, Context, Result};
@@ -67,6 +68,11 @@ pub struct WorkerConfig {
     pub sccache: bool,
     /// Taille maximale du cache sccache (`SCCACHE_CACHE_SIZE`).
     pub sccache_size: String,
+    /// Informations de débogage des profils dev et test de cargo pour les
+    /// agents (`CARGO_PROFILE_{DEV,TEST}_DEBUG`) : `line-tables-only` divise
+    /// la taille des binaires de test en gardant les numéros de ligne des
+    /// traces ; vide = réglage du projet.
+    pub cargo_debug: String,
 }
 
 impl Default for WorkerConfig {
@@ -98,6 +104,7 @@ impl Default for WorkerConfig {
             cache_max_gb: 30,
             sccache: true,
             sccache_size: "20G".into(),
+            cargo_debug: "line-tables-only".into(),
         }
     }
 }

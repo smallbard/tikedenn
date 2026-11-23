@@ -257,6 +257,15 @@ pub(crate) fn run_agent(
             command.env("SCCACHE_CACHE_SIZE", &ctx.cfg.worker.sccache_size);
         }
     }
+    // Binaires de test plus petits (cache de compilation plusieurs fois moins
+    // gros), sauf si l'environnement du worker règle déjà ces profils.
+    if !ctx.cfg.worker.cargo_debug.is_empty() {
+        for var in ["CARGO_PROFILE_DEV_DEBUG", "CARGO_PROFILE_TEST_DEBUG"] {
+            if std::env::var_os(var).is_none() {
+                command.env(var, &ctx.cfg.worker.cargo_debug);
+            }
+        }
+    }
     let mut child = command
         .stdin(Stdio::null())
         .stdout(Stdio::piped())

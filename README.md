@@ -151,7 +151,10 @@ repository, `tkd next` and `tkd list` are limited to the project whose
    build outputs (`TIKEDENN_CACHE`, `CARGO_TARGET_DIR=…/target`), kept between
    the task's sessions so that a rebase or a new review round does not rebuild
    from scratch; with `sccache` installed, `RUSTC_WRAPPER=sccache` shares
-   compiled crates between worktrees (`sccache_size`, default 20G). Processes
+   compiled crates between worktrees (`sccache_size`, default 20G), and
+   `cargo_debug` (default `line-tables-only`, empty = the project's setting)
+   sets `CARGO_PROFILE_DEV_DEBUG` / `CARGO_PROFILE_TEST_DEBUG` for much smaller
+   test binaries that keep line numbers in backtraces. Processes
    the agent left running (test servers…) are stopped when it exits and listed
    in the task log. Every hour, the worktrees of done or deleted tasks are
    removed, and the build cache of a worktree unused for

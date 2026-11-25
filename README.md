@@ -158,7 +158,10 @@ repository, `tkd next` and `tkd list` are limited to the project whose
    compiled crates between worktrees (`sccache_size`, default 20G), and
    `cargo_debug` (default `line-tables-only`, empty = the project's setting)
    sets `CARGO_PROFILE_DEV_DEBUG` / `CARGO_PROFILE_TEST_DEBUG` for much smaller
-   test binaries that keep line numbers in backtraces. Processes
+   test binaries that keep line numbers in backtraces; `cargo_incremental`
+   (default `false`) sets `CARGO_INCREMENTAL=0`, which saves about 24 GB per
+   worktree (and lets sccache cache the project's own crates) at the cost of
+   slightly slower rebuilds of the changed code. Processes
    the agent left running (test servers…) are stopped when it exits and listed
    in the task log. Every hour, the worktrees of done or deleted tasks are
    removed, and the build cache of a worktree unused for

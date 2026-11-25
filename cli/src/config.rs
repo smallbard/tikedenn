@@ -23,6 +23,7 @@
 //! sccache = true                  # RUSTC_WRAPPER=sccache si sccache est installé (cache partagé)
 //! sccache_size = "20G"            # taille maximale du cache sccache
 //! cargo_debug = "line-tables-only" # infos de débogage des builds dev/test des agents ("" = celles du projet)
+//! cargo_incremental = false       # compilation incrémentale des agents (false = CARGO_INCREMENTAL=0)
 //! ```
 
 use anyhow::{bail, Context, Result};
@@ -73,6 +74,11 @@ pub struct WorkerConfig {
     /// la taille des binaires de test en gardant les numéros de ligne des
     /// traces ; vide = réglage du projet.
     pub cargo_debug: String,
+    /// Compilation incrémentale de cargo pour les agents : `false` pose
+    /// `CARGO_INCREMENTAL=0` (≈ 24 Go de moins par worktree, et sccache peut
+    /// alors mettre en cache les crates du projet) au prix de recompilations
+    /// un peu plus longues du code modifié.
+    pub cargo_incremental: bool,
 }
 
 impl Default for WorkerConfig {
@@ -105,6 +111,7 @@ impl Default for WorkerConfig {
             sccache: true,
             sccache_size: "20G".into(),
             cargo_debug: "line-tables-only".into(),
+            cargo_incremental: false,
         }
     }
 }

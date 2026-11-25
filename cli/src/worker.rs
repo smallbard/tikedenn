@@ -266,6 +266,10 @@ pub(crate) fn run_agent(
             }
         }
     }
+    // Sans compilation incrémentale : bien moins de disque par worktree.
+    if !ctx.cfg.worker.cargo_incremental && std::env::var_os("CARGO_INCREMENTAL").is_none() {
+        command.env("CARGO_INCREMENTAL", "0");
+    }
     let mut child = command
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
